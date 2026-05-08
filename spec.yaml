@@ -2,8 +2,8 @@
 name: PostgreSQL Server # Service Plan Name
 deployment:
   hostedDeployment:
-    AwsAccountId: "<AWS_ACCOUNT_ID>" # Replace <AWS_ACCOUNT_ID> with your AWS Account ID
-    AWSBootstrapRoleAccountArn: "arn:aws:iam::<AWS_ACCOUNT_ID>:role/omnistrate-bootstrap-role"
+    AwsAccountId: "339713121445"
+    AWSBootstrapRoleAccountArn: "arn:aws:iam::339713121445:role/omnistrate-bootstrap-role"
 tenancyType: CUSTOM_TENANCY
 features:
   INTERNAL:
@@ -189,3 +189,194 @@ services:
           chartVersion: 0.26.0
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
+
+# Custom operator workflows with inline workflow definitions
+customWorkflows:
+  - verb: backup
+    displayName: Backup now
+    scope:
+      - fleet
+      - end-customer
+    apiParameters:
+      - key: method
+        displayName: Backup Method
+        description: Backup method to use
+        type: String
+        required: false
+        defaultValue: barmanObjectStore
+        options:
+          - barmanObjectStore
+          - volumeSnapshot
+    snapshot:
+      id: "{{ $sys.backup.snapshot.id }}"
+      time: "{{ $sys.snapshot.time }}"
+      externalRef:
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Backup
+        name: "{{ $sys.backup.snapshot.id }}"
+    workflow:
+      entrypoint: backup
+      arguments:
+        parameters:
+          - name: snapshotId
+            value: "{{ $sys.snapshot.id }}"
+          - name: snapshotTime
+            value: "{{ $sys.snapshot.time }}"
+          - name: namespace
+            value: "{{ $sys.namespace }}"
+          - name: instanceId
+            value: "{{ $sys.instanceId }}"
+          - name: method
+            value: "{{ $var.method }}"
+      templates:
+        - name: backup
+          inputs:
+            parameters:
+              - name: snapshotId
+              - name: snapshotTime
+              - name: namespace
+              - name: instanceId
+              - name: method
+          dag:
+            tasks:
+              - name: createBackupCR
+                template: apply-backup
+                arguments:
+                  parameters:
+                    - name: snapshotId
+                      value: "{{inputs.parameters.snapshotId}}"
+                    - name: snapshotTime
+                      value: "{{inputs.parameters.snapshotTime}}"
+                    - name: namespace
+                      value: "{{inputs.parameters.namespace}}"
+                    - name: instanceId
+                      value: "{{inputs.parameters.instanceId}}"
+                    - name: method
+                      value: "{{inputs.parameters.method}}"
+        - name: apply-backup
+          inputs:
+            parameters:
+              - name: snapshotId
+              - name: snapshotTime
+              - name: namespace
+              - name: instanceId
+              - name: method
+          resource:
+            action: apply
+            successCondition: status.phase == completed
+            failureCondition: status.phase == failed
+            manifest: |
+              apiVersion: postgresql.cnpg.io/v1
+              kind: Backup
+              metadata:
+                name: "{{inputs.parameters.snapshotId}}"
+                namespace: "{{inputs.parameters.namespace}}"
+                annotations:
+                  omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
+                  omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
+              spec:
+                method: "{{inputs.parameters.method}}"
+                cluster:
+                  name: "{{inputs.parameters.instanceId}}"
+
+  - verb: restore
+    displayName: Restore to new cluster
+    scope:
+      - fleet
+      - end-customer
+    apiParameters:
+      - key: snapshotId
+        displayName: Snapshot ID
+        description: Selected snapshot id for restore
+        type: String
+        required: true
+      - key: newClusterName
+        displayName: New Cluster Name
+        description: Name for the restored cluster
+        type: String
+        required: true
+      - key: restoreInstances
+        displayName: Instances
+        description: Number of instances in the restored cluster
+        type: Float64
+        required: true
+        defaultValue: "1"
+      - key: restoreStorageSize
+        displayName: Storage Size
+        description: Storage size for the restored cluster
+        type: String
+        required: true
+        defaultValue: "20Gi"
+    workflow:
+      entrypoint: restore
+      arguments:
+        parameters:
+          - name: namespace
+            value: "{{ $sys.namespace }}"
+          - name: restoreSnapshotId
+            value: "{{ $sys.restore.snapshotId }}"
+          - name: restoreSnapshotTime
+            value: "{{ $sys.restore.snapshotTime }}"
+          - name: newClusterName
+            value: "{{ $var.newClusterName }}"
+          - name: instances
+            value: "{{ $var.restoreInstances }}"
+          - name: storageSize
+            value: "{{ $var.restoreStorageSize }}"
+      templates:
+        - name: restore
+          inputs:
+            parameters:
+              - name: namespace
+              - name: restoreSnapshotId
+              - name: restoreSnapshotTime
+              - name: newClusterName
+              - name: instances
+              - name: storageSize
+          dag:
+            tasks:
+              - name: createCluster
+                template: apply-cluster
+                arguments:
+                  parameters:
+                    - name: namespace
+                      value: "{{inputs.parameters.namespace}}"
+                    - name: restoreSnapshotId
+                      value: "{{inputs.parameters.restoreSnapshotId}}"
+                    - name: restoreSnapshotTime
+                      value: "{{inputs.parameters.restoreSnapshotTime}}"
+                    - name: newClusterName
+                      value: "{{inputs.parameters.newClusterName}}"
+                    - name: instances
+                      value: "{{inputs.parameters.instances}}"
+                    - name: storageSize
+                      value: "{{inputs.parameters.storageSize}}"
+        - name: apply-cluster
+          inputs:
+            parameters:
+              - name: namespace
+              - name: restoreSnapshotId
+              - name: restoreSnapshotTime
+              - name: newClusterName
+              - name: instances
+              - name: storageSize
+          resource:
+            action: apply
+            successCondition: status.conditions.#(type=="Ready").status == True
+            manifest: |
+              apiVersion: postgresql.cnpg.io/v1
+              kind: Cluster
+              metadata:
+                name: "{{inputs.parameters.newClusterName}}"
+                namespace: "{{inputs.parameters.namespace}}"
+                annotations:
+                  omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
+                  omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
+              spec:
+                instances: {{inputs.parameters.instances}}
+                storage:
+                  size: "{{inputs.parameters.storageSize}}"
+                bootstrap:
+                  recovery:
+                    backup:
+                      name: "{{inputs.parameters.restoreSnapshotId}}"
