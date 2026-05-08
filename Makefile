@@ -1,5 +1,5 @@
-SERVICE_NAME="PostgreSQL Server"
-SERVICE_PLAN="PostgreSQL Server"
+SERVICE_NAME="Postgres Operator"
+SERVICE_PLAN="Postgres Operator"
 MAIN_RESOURCE_NAME=CNPG
 ENVIRONMENT=Dev
 CLOUD_PROVIDER=aws

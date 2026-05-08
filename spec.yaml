@@ -1,5 +1,5 @@
-# yaml-language-server: $schema=https://api.omnistrate.cloud/2022-09-01-00/schema/service-spec-schema.json
-name: PostgreSQL Server # Service Plan Name
+# yaml-language-server: $schema=https://api.omnistrate.dev/2022-09-01-00/schema/service-spec-schema.json
+name: Postgres Operator # Service Plan Name
 deployment:
   hostedDeployment:
     AwsAccountId: "339713121445"
@@ -207,13 +207,6 @@ customWorkflows:
         options:
           - barmanObjectStore
           - volumeSnapshot
-    snapshot:
-      id: "{{ $sys.backup.snapshot.id }}"
-      time: "{{ $sys.snapshot.time }}"
-      externalRef:
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Backup
-        name: "{{ $sys.backup.snapshot.id }}"
     workflow:
       entrypoint: backup
       arguments:
