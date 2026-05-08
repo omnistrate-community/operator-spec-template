@@ -190,23 +190,12 @@ services:
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
 
-# Custom operator workflows with inline workflow definitions
-customWorkflows:
-  - verb: backup
-    displayName: Backup now
-    scope:
-      - fleet
-      - end-customer
-    apiParameters:
-      - key: method
-        displayName: Backup Method
-        description: Backup method to use
-        type: String
-        required: false
-        defaultValue: barmanObjectStore
-        options:
-          - barmanObjectStore
-          - volumeSnapshot
+systemWorkflows:
+  backup:
+    backupRetentionInDays: 7
+    backupPeriodInHours: 2
+    snapshotBeforeDeletion: true 
+
     workflow:
       entrypoint: backup
       arguments:
@@ -272,34 +261,7 @@ customWorkflows:
                 cluster:
                   name: "{{inputs.parameters.instanceId}}"
 
-  - verb: restore
-    displayName: Restore to new cluster
-    scope:
-      - fleet
-      - end-customer
-    apiParameters:
-      - key: snapshotId
-        displayName: Snapshot ID
-        description: Selected snapshot id for restore
-        type: String
-        required: true
-      - key: newClusterName
-        displayName: New Cluster Name
-        description: Name for the restored cluster
-        type: String
-        required: true
-      - key: restoreInstances
-        displayName: Instances
-        description: Number of instances in the restored cluster
-        type: Float64
-        required: true
-        defaultValue: "1"
-      - key: restoreStorageSize
-        displayName: Storage Size
-        description: Storage size for the restored cluster
-        type: String
-        required: true
-        defaultValue: "20Gi"
+  restore:
     workflow:
       entrypoint: restore
       arguments:
@@ -373,3 +335,107 @@ customWorkflows:
                   recovery:
                     backup:
                       name: "{{inputs.parameters.restoreSnapshotId}}"
+
+# Custom operator workflows with inline workflow definitions
+customWorkflows:
+- verb: switchOver
+  displayName: switch over
+  scope:
+    - fleet
+    - end-customer
+  apiParameters:
+    - key: snapshotId
+      displayName: Snapshot ID
+      description: Selected snapshot id for restore
+      type: String
+      required: true
+    - key: newClusterName
+      displayName: New Cluster Name
+      description: Name for the restored cluster
+      type: String
+      required: true
+    - key: restoreInstances
+      displayName: Instances
+      description: Number of instances in the restored cluster
+      type: Float64
+      required: true
+      defaultValue: "1"
+    - key: restoreStorageSize
+      displayName: Storage Size
+      description: Storage size for the restored cluster
+      type: String
+      required: true
+      defaultValue: "20Gi"
+  workflow:
+    entrypoint: restore
+    arguments:
+      parameters:
+        - name: namespace
+          value: "{{ $sys.namespace }}"
+        - name: restoreSnapshotId
+          value: "{{ $sys.restore.snapshotId }}"
+        - name: restoreSnapshotTime
+          value: "{{ $sys.restore.snapshotTime }}"
+        - name: newClusterName
+          value: "{{ $var.newClusterName }}"
+        - name: instances
+          value: "{{ $var.restoreInstances }}"
+        - name: storageSize
+          value: "{{ $var.restoreStorageSize }}"
+    templates:
+      - name: restore
+        inputs:
+          parameters:
+            - name: namespace
+            - name: restoreSnapshotId
+            - name: restoreSnapshotTime
+            - name: newClusterName
+            - name: instances
+            - name: storageSize
+        dag:
+          tasks:
+            - name: createCluster
+              template: apply-cluster
+              arguments:
+                parameters:
+                  - name: namespace
+                    value: "{{inputs.parameters.namespace}}"
+                  - name: restoreSnapshotId
+                    value: "{{inputs.parameters.restoreSnapshotId}}"
+                  - name: restoreSnapshotTime
+                    value: "{{inputs.parameters.restoreSnapshotTime}}"
+                  - name: newClusterName
+                    value: "{{inputs.parameters.newClusterName}}"
+                  - name: instances
+                    value: "{{inputs.parameters.instances}}"
+                  - name: storageSize
+                    value: "{{inputs.parameters.storageSize}}"
+      - name: apply-cluster
+        inputs:
+          parameters:
+            - name: namespace
+            - name: restoreSnapshotId
+            - name: restoreSnapshotTime
+            - name: newClusterName
+            - name: instances
+            - name: storageSize
+        resource:
+          action: apply
+          successCondition: status.conditions.#(type=="Ready").status == True
+          manifest: |
+            apiVersion: postgresql.cnpg.io/v1
+            kind: Cluster
+            metadata:
+              name: "{{inputs.parameters.newClusterName}}"
+              namespace: "{{inputs.parameters.namespace}}"
+              annotations:
+                omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
+                omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
+            spec:
+              instances: {{inputs.parameters.instances}}
+              storage:
+                size: "{{inputs.parameters.storageSize}}"
+              bootstrap:
+                recovery:
+                  backup:
+                    name: "{{inputs.parameters.restoreSnapshotId}}"
