@@ -336,6 +336,68 @@ systemWorkflows:
                     backup:
                       name: "{{inputs.parameters.restoreSnapshotId}}"
 
+  deleteBackup:
+    workflow:
+      entrypoint: deleteBackup
+      arguments:
+        parameters:
+          - name: snapshotId
+            value: "{{ $sys.snapshot.id }}"
+          - name: snapshotTime
+            value: "{{ $sys.snapshot.time }}"
+          - name: namespace
+            value: "{{ $sys.namespace }}"
+          - name: instanceId
+            value: "{{ $sys.instanceId }}"
+          - name: method
+            value: "{{ $var.method }}"
+      templates:
+        - name: deleteBackup
+          inputs:
+            parameters:
+              - name: snapshotId
+              - name: snapshotTime
+              - name: namespace
+              - name: instanceId
+              - name: method
+          dag:
+            tasks:
+              - name: createBackupCR
+                template: apply-delete-backup
+                arguments:
+                  parameters:
+                    - name: snapshotId
+                      value: "{{inputs.parameters.snapshotId}}"
+                    - name: snapshotTime
+                      value: "{{inputs.parameters.snapshotTime}}"
+                    - name: namespace
+                      value: "{{inputs.parameters.namespace}}"
+                    - name: instanceId
+                      value: "{{inputs.parameters.instanceId}}"
+                    - name: method
+                      value: "{{inputs.parameters.method}}"
+        - name: apply-delete-backup
+          inputs:
+            parameters:
+              - name: snapshotId
+              - name: snapshotTime
+              - name: namespace
+              - name: instanceId
+              - name: method
+          resource:
+            action: delete
+            successCondition: status.phase == completed
+            failureCondition: status.phase == failed
+            manifest: |
+              apiVersion: postgresql.cnpg.io/v1
+              kind: Backup
+              metadata:
+                name: "{{inputs.parameters.snapshotId}}"
+                namespace: "{{inputs.parameters.namespace}}"
+                annotations:
+                  omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
+                  omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
+
 # Custom operator workflows with inline workflow definitions
 customWorkflows:
 - verb: switchOver
