@@ -67,6 +67,14 @@ services:
         required: false
         export: true
         defaultValue: "20Gi"
+      - key: backupMethod
+        description: CloudNativePG backup method to use for manual, periodic, and delete-triggered backups
+        name: Backup Method
+        type: String
+        modifiable: true
+        required: false
+        export: true
+        defaultValue: "barmanObjectStore"
     endpointConfiguration:
       writer:
         host: "$sys.network.externalClusterEndpoint"
@@ -209,7 +217,7 @@ systemWorkflows:
           - name: instanceId
             value: "{{ $sys.instanceId }}"
           - name: method
-            value: "{{ $var.method }}"
+            value: "{{ $var.backupMethod }}"
       templates:
         - name: backup
           inputs:
@@ -273,11 +281,11 @@ systemWorkflows:
           - name: restoreSnapshotTime
             value: "{{ $sys.restore.snapshotTime }}"
           - name: newClusterName
-            value: "{{ $var.newClusterName }}"
+            value: "{{ $sys.targetInstanceId }}"
           - name: instances
-            value: "{{ $var.restoreInstances }}"
+            value: "{{ $var.numberOfInstances }}"
           - name: storageSize
-            value: "{{ $var.restoreStorageSize }}"
+            value: "{{ $var.storageSize }}"
       templates:
         - name: restore
           inputs:
@@ -349,8 +357,6 @@ systemWorkflows:
             value: "{{ $sys.namespace }}"
           - name: instanceId
             value: "{{ $sys.instanceId }}"
-          - name: method
-            value: "{{ $var.method }}"
       templates:
         - name: deleteBackup
           inputs:
@@ -359,11 +365,10 @@ systemWorkflows:
               - name: snapshotTime
               - name: namespace
               - name: instanceId
-              - name: method
           dag:
             tasks:
-              - name: createBackupCR
-                template: apply-delete-backup
+              - name: deleteBackupCR
+                template: delete-backup
                 arguments:
                   parameters:
                     - name: snapshotId
@@ -374,20 +379,15 @@ systemWorkflows:
                       value: "{{inputs.parameters.namespace}}"
                     - name: instanceId
                       value: "{{inputs.parameters.instanceId}}"
-                    - name: method
-                      value: "{{inputs.parameters.method}}"
-        - name: apply-delete-backup
+        - name: delete-backup
           inputs:
             parameters:
               - name: snapshotId
               - name: snapshotTime
               - name: namespace
               - name: instanceId
-              - name: method
           resource:
             action: delete
-            successCondition: status.phase == completed
-            failureCondition: status.phase == failed
             manifest: |
               apiVersion: postgresql.cnpg.io/v1
               kind: Backup
@@ -400,104 +400,59 @@ systemWorkflows:
 
 # Custom operator workflows with inline workflow definitions
 customWorkflows:
-- verb: switchOver
-  displayName: switch over
+- verb: failover
+  displayName: Force failover
+  description: Delete the current primary pod and let CloudNativePG promote the most suitable replica.
   scope:
     - fleet
-    - end-customer
   apiParameters:
-    - key: snapshotId
-      displayName: Snapshot ID
-      description: Selected snapshot id for restore
+    - key: primaryPodName
+      displayName: Primary Pod Name
+      description: Name of the current CloudNativePG primary pod to delete.
       type: String
       required: true
-    - key: newClusterName
-      displayName: New Cluster Name
-      description: Name for the restored cluster
-      type: String
-      required: true
-    - key: restoreInstances
-      displayName: Instances
-      description: Number of instances in the restored cluster
-      type: Float64
-      required: true
-      defaultValue: "1"
-    - key: restoreStorageSize
-      displayName: Storage Size
-      description: Storage size for the restored cluster
-      type: String
-      required: true
-      defaultValue: "20Gi"
   workflow:
-    entrypoint: restore
+    entrypoint: failover
     arguments:
       parameters:
         - name: namespace
           value: "{{ $sys.namespace }}"
-        - name: restoreSnapshotId
-          value: "{{ $sys.restore.snapshotId }}"
-        - name: restoreSnapshotTime
-          value: "{{ $sys.restore.snapshotTime }}"
-        - name: newClusterName
-          value: "{{ $var.newClusterName }}"
-        - name: instances
-          value: "{{ $var.restoreInstances }}"
-        - name: storageSize
-          value: "{{ $var.restoreStorageSize }}"
+        - name: instanceId
+          value: "{{ $sys.instanceId }}"
+        - name: primaryPodName
+          value: "{{ $var.primaryPodName }}"
     templates:
-      - name: restore
+      - name: failover
         inputs:
           parameters:
             - name: namespace
-            - name: restoreSnapshotId
-            - name: restoreSnapshotTime
-            - name: newClusterName
-            - name: instances
-            - name: storageSize
+            - name: instanceId
+            - name: primaryPodName
         dag:
           tasks:
-            - name: createCluster
-              template: apply-cluster
+            - name: deletePrimaryPod
+              template: delete-primary-pod
               arguments:
                 parameters:
                   - name: namespace
                     value: "{{inputs.parameters.namespace}}"
-                  - name: restoreSnapshotId
-                    value: "{{inputs.parameters.restoreSnapshotId}}"
-                  - name: restoreSnapshotTime
-                    value: "{{inputs.parameters.restoreSnapshotTime}}"
-                  - name: newClusterName
-                    value: "{{inputs.parameters.newClusterName}}"
-                  - name: instances
-                    value: "{{inputs.parameters.instances}}"
-                  - name: storageSize
-                    value: "{{inputs.parameters.storageSize}}"
-      - name: apply-cluster
+                  - name: instanceId
+                    value: "{{inputs.parameters.instanceId}}"
+                  - name: primaryPodName
+                    value: "{{inputs.parameters.primaryPodName}}"
+      - name: delete-primary-pod
         inputs:
           parameters:
             - name: namespace
-            - name: restoreSnapshotId
-            - name: restoreSnapshotTime
-            - name: newClusterName
-            - name: instances
-            - name: storageSize
+            - name: instanceId
+            - name: primaryPodName
         resource:
-          action: apply
-          successCondition: status.conditions.#(type=="Ready").status == True
+          action: delete
           manifest: |
-            apiVersion: postgresql.cnpg.io/v1
-            kind: Cluster
+            apiVersion: v1
+            kind: Pod
             metadata:
-              name: "{{inputs.parameters.newClusterName}}"
+              name: "{{inputs.parameters.primaryPodName}}"
               namespace: "{{inputs.parameters.namespace}}"
-              annotations:
-                omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
-                omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
-            spec:
-              instances: {{inputs.parameters.instances}}
-              storage:
-                size: "{{inputs.parameters.storageSize}}"
-              bootstrap:
-                recovery:
-                  backup:
-                    name: "{{inputs.parameters.restoreSnapshotId}}"
+              labels:
+                postgresql: "{{inputs.parameters.instanceId}}"

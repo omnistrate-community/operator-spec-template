@@ -40,3 +40,14 @@ Make sure to keep this file secure and never commit it to version control.
 - `make delete-all`: Deletes all running instances immediately
 - `make delete-all-wait`: Deletes all instances and waits for completion
 - `make destroy`: Deletes all instances and removes the service completely
+
+## Operator Workflow Example
+
+The service spec demonstrates CloudNativePG lifecycle workflows:
+
+- `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled.
+- `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`.
+- `systemWorkflows.deleteBackup` is used by explicit snapshot deletion and retention cleanup. It receives the same `$sys.snapshot.*` values as backup.
+- `customWorkflows.failover` is a provider-defined action. It does not receive restore context; it uses `$sys.namespace`, `$sys.instanceId`, and the user-supplied `primaryPodName`.
+
+The CNPG backup workflow creates a `Backup` resource. A production spec must also configure the CNPG cluster backup backend, credentials, and WAL/archive settings appropriate for the selected `backupMethod`.
