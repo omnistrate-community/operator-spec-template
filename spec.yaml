@@ -90,100 +90,9 @@ services:
         networkingType: PUBLIC
         
     operatorCRDConfiguration:
-      template: |
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Cluster
-        metadata:
-          name: {{ $sys.id }}
-        spec:
-          enablePDB: true
-          bootstrap:
-            initdb:
-              owner: {{ $var.postgresqlUsername }}
-              database: {{ $var.postgresqlDatabase }}
-              secret:
-                name: basic-auth
-          affinity:
-            nodeAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                nodeSelectorTerms:
-                  - matchExpressions:
-                    - key: omnistrate.com/managed-by
-                      operator: In
-                      values:
-                      - omnistrate
-                    - key: topology.kubernetes.io/region
-                      operator: In
-                      values:
-                      - {{ $sys.deploymentCell.region }}
-                    - key: node.kubernetes.io/instance-type
-                      operator: In
-                      values:
-                      - {{ $sys.compute.node.instanceType }}
-                    - key: omnistrate.com/resource
-                      operator: In
-                      values:
-                      - {{ $sys.deployment.resourceID }}
-          instances: {{ $var.numberOfInstances }}
-          storage:
-            resizeInUseVolumes: true
-            size: {{ $var.storageSize }}
-            storageClass: gp3
-          managed:
-            services:
-              additional:
-                - selectorType: ro
-                  serviceTemplate:
-                    metadata:
-                      name: "{{ $sys.id }}-cluster-ro"
-                      annotations:
-                          external-dns.alpha.kubernetes.io/hostname: reader-{{ $sys.network.externalClusterEndpoint }}
-                          external-dns.alpha.kubernetes.io/ttl: "60"
-                          service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: omnistrate.com/resource={{ $sys.deployment.resourceID }},omnistrate.com/instance={{ $sys.id }},omnistrate.com/managed-by=omnistrate
-                          service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
-                          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-                          service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-                          service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
-                          service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
-                          service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
-                          service.beta.kubernetes.io/aws-load-balancer-type: external
-                          service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
-                          service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-                    spec:
-                      type: LoadBalancer
-                  updateStrategy: patch
-                - selectorType: rw
-                  serviceTemplate:
-                    metadata:
-                      name: "{{ $sys.id }}-cluster-rw"
-                      annotations:
-                          external-dns.alpha.kubernetes.io/hostname: {{ $sys.network.externalClusterEndpoint }}
-                          external-dns.alpha.kubernetes.io/ttl: "60"
-                          service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: omnistrate.com/resource={{ $sys.deployment.resourceID }},omnistrate.com/instance={{ $sys.id }},omnistrate.com/managed-by=omnistrate
-                          service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
-                          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-                          service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-                          service.beta.kubernetes.io/aws-load-balancer-subnets: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
-                          service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
-                          service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
-                          service.beta.kubernetes.io/aws-load-balancer-type: external
-                          service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
-                          service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-                    spec:
-                      type: LoadBalancer
-                  updateStrategy: patch
-      supplementalFiles:
-        - |
-          # Basic auth using parameters
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: basic-auth
-            namespace: {{ $sys.id }}
-          type: kubernetes.io/basic-auth
-          data:
-            username: {{ $func.base64encode($var.postgresqlUsername) }}
-            password: {{ $func.base64encode($var.postgresqlPassword) }}
+      # Deprecated fields intentionally omitted:
+      # template, supplementalFiles.
+      # CNPG lifecycle is managed by systemWorkflows.create/update/delete.
       readinessConditions:
         "$var._crd.status.phase": "Cluster in healthy state"
         '$var._crd.status.conditions[?(@.type=="Ready")].status': "True"
@@ -206,6 +115,443 @@ services:
         snapshotBeforeDeletion: true
 
     systemWorkflows:
+
+      create:
+        workflow:
+          entrypoint: create
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: postgresqlUsername
+                value: "{{ $var.postgresqlUsername }}"
+              - name: postgresqlDatabase
+                value: "{{ $var.postgresqlDatabase }}"
+              - name: postgresqlUsernameEncoded
+                value: "{{ $func.base64encode($var.postgresqlUsername) }}"
+              - name: postgresqlPasswordEncoded
+                value: "{{ $func.base64encode($var.postgresqlPassword) }}"
+              - name: numberOfInstances
+                value: "{{ $var.numberOfInstances }}"
+              - name: storageSize
+                value: "{{ $var.storageSize }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: publicSubnetIds
+                value: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
+          templates:
+            - name: create
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+                  - name: numberOfInstances
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
+              dag:
+                tasks:
+                  - name: createsecret
+                    template: apply-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: postgresqlUsernameEncoded
+                          value: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                        - name: postgresqlPasswordEncoded
+                          value: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+                  - name: applycluster
+                    template: apply-cluster
+                    dependencies:
+                      - createsecret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: postgresqlUsername
+                          value: "{{inputs.parameters.postgresqlUsername}}"
+                        - name: postgresqlDatabase
+                          value: "{{inputs.parameters.postgresqlDatabase}}"
+                        - name: numberOfInstances
+                          value: "{{inputs.parameters.numberOfInstances}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: publicSubnetIds
+                          value: "{{inputs.parameters.publicSubnetIds}}"
+            - name: apply-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: kubernetes.io/basic-auth
+                  data:
+                    username: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                    password: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+            - name: apply-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: numberOfInstances
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
+              resource:
+                action: apply
+                successCondition: status.conditions.#(type=="Ready").status == True
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    enablePDB: true
+                    bootstrap:
+                      initdb:
+                        owner: "{{inputs.parameters.postgresqlUsername}}"
+                        database: "{{inputs.parameters.postgresqlDatabase}}"
+                        secret:
+                          name: basic-auth
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                              - key: omnistrate.com/managed-by
+                                operator: In
+                                values:
+                                - omnistrate
+                              - key: topology.kubernetes.io/region
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.region}}"
+                              - key: node.kubernetes.io/instance-type
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.instanceType}}"
+                              - key: omnistrate.com/resource
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.resourceId}}"
+                    instances: {{inputs.parameters.numberOfInstances}}
+                    storage:
+                      resizeInUseVolumes: true
+                      size: "{{inputs.parameters.storageSize}}"
+                      storageClass: gp3
+                    managed:
+                      services:
+                        additional:
+                          - selectorType: ro
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-ro"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
+                          - selectorType: rw
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-rw"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
+
+      update:
+        workflow:
+          entrypoint: update
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: postgresqlUsername
+                value: "{{ $var.postgresqlUsername }}"
+              - name: postgresqlDatabase
+                value: "{{ $var.postgresqlDatabase }}"
+              - name: numberOfInstances
+                value: "{{ $var.numberOfInstances }}"
+              - name: storageSize
+                value: "{{ $var.storageSize }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: publicSubnetIds
+                value: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
+          templates:
+            - name: update
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: numberOfInstances
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
+              dag:
+                tasks:
+                  - name: applycluster
+                    template: apply-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: postgresqlUsername
+                          value: "{{inputs.parameters.postgresqlUsername}}"
+                        - name: postgresqlDatabase
+                          value: "{{inputs.parameters.postgresqlDatabase}}"
+                        - name: numberOfInstances
+                          value: "{{inputs.parameters.numberOfInstances}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: publicSubnetIds
+                          value: "{{inputs.parameters.publicSubnetIds}}"
+            - name: apply-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: numberOfInstances
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
+              resource:
+                action: apply
+                successCondition: status.conditions.#(type=="Ready").status == True
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    enablePDB: true
+                    bootstrap:
+                      initdb:
+                        owner: "{{inputs.parameters.postgresqlUsername}}"
+                        database: "{{inputs.parameters.postgresqlDatabase}}"
+                        secret:
+                          name: basic-auth
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                              - key: omnistrate.com/managed-by
+                                operator: In
+                                values:
+                                - omnistrate
+                              - key: topology.kubernetes.io/region
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.region}}"
+                              - key: node.kubernetes.io/instance-type
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.instanceType}}"
+                              - key: omnistrate.com/resource
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.resourceId}}"
+                    instances: {{inputs.parameters.numberOfInstances}}
+                    storage:
+                      resizeInUseVolumes: true
+                      size: "{{inputs.parameters.storageSize}}"
+                      storageClass: gp3
+                    managed:
+                      services:
+                        additional:
+                          - selectorType: ro
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-ro"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
+                          - selectorType: rw
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-rw"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
+
+      delete:
+        workflow:
+          entrypoint: delete
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: delete
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              dag:
+                tasks:
+                  - name: deletecluster
+                    template: delete-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                  - name: deletesecret
+                    template: delete-secret
+                    dependencies:
+                      - deletecluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+            - name: delete-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-secret
+              inputs:
+                parameters:
+                  - name: namespace
+              resource:
+                action: delete
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
 
       backup:
 
