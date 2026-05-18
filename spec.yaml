@@ -199,6 +199,12 @@ services:
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
 
+    capabilities:    
+      backupConfiguration:
+        backupRetentionInDays: 7
+        backupPeriodInHours: 24
+        snapshotBeforeDeletion: true
+
     systemWorkflows:
 
       backup:
