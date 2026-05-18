@@ -91,8 +91,17 @@ services:
         
     operatorCRDConfiguration:
       # Deprecated fields intentionally omitted:
-      # template, supplementalFiles, readinessConditions, outputParameters.
+      # template, supplementalFiles.
       # CNPG lifecycle is managed by systemWorkflows.create/update/delete.
+      readinessConditions:
+        "$var._crd.status.phase": "Cluster in healthy state"
+        '$var._crd.status.conditions[?(@.type=="Ready")].status': "True"
+
+      outputParameters:
+        "Postgres Container Image": "$var._crd.status.image"
+        "Status": "$var._crd.status.phase"
+        "Topology": "$var._crd.status.topology"
+
       helmChartDependencies:
         - chartName: cloudnative-pg
           chartVersion: 0.26.0
@@ -195,17 +204,6 @@ services:
                           value: "{{inputs.parameters.resourceId}}"
                         - name: publicSubnetIds
                           value: "{{inputs.parameters.publicSubnetIds}}"
-              outputs:
-                parameters:
-                  - name: postgresContainerImage
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.postgresContainerImage}}"
-                  - name: status
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.status}}"
-                  - name: topology
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.topology}}"
             - name: apply-secret
               inputs:
                 parameters:
@@ -238,17 +236,6 @@ services:
                   - name: instanceType
                   - name: resourceId
                   - name: publicSubnetIds
-              outputs:
-                parameters:
-                  - name: postgresContainerImage
-                    valueFrom:
-                      jsonPath: "{.status.image}"
-                  - name: status
-                    valueFrom:
-                      jsonPath: "{.status.phase}"
-                  - name: topology
-                    valueFrom:
-                      jsonPath: "{.status.topology}"
               resource:
                 action: apply
                 successCondition: status.conditions.#(type=="Ready").status == True
@@ -406,17 +393,6 @@ services:
                           value: "{{inputs.parameters.resourceId}}"
                         - name: publicSubnetIds
                           value: "{{inputs.parameters.publicSubnetIds}}"
-              outputs:
-                parameters:
-                  - name: postgresContainerImage
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.postgresContainerImage}}"
-                  - name: status
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.status}}"
-                  - name: topology
-                    valueFrom:
-                      parameter: "{{tasks.applycluster.outputs.parameters.topology}}"
             - name: apply-cluster
               inputs:
                 parameters:
@@ -431,17 +407,6 @@ services:
                   - name: instanceType
                   - name: resourceId
                   - name: publicSubnetIds
-              outputs:
-                parameters:
-                  - name: postgresContainerImage
-                    valueFrom:
-                      jsonPath: "{.status.image}"
-                  - name: status
-                    valueFrom:
-                      jsonPath: "{.status.phase}"
-                  - name: topology
-                    valueFrom:
-                      jsonPath: "{.status.topology}"
               resource:
                 action: apply
                 successCondition: status.conditions.#(type=="Ready").status == True
