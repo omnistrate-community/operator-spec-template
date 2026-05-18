@@ -88,6 +88,7 @@ services:
           - 5432
         primary: false
         networkingType: PUBLIC
+        
     operatorCRDConfiguration:
       template: |
         apiVersion: postgresql.cnpg.io/v1
@@ -198,261 +199,259 @@ services:
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
 
-systemWorkflows:
-  backup:
-    backupRetentionInDays: 7
-    backupPeriodInHours: 2
-    snapshotBeforeDeletion: true 
+    systemWorkflows:
 
-    workflow:
-      entrypoint: backup
-      arguments:
-        parameters:
-          - name: snapshotId
-            value: "{{ $sys.snapshot.id }}"
-          - name: snapshotTime
-            value: "{{ $sys.snapshot.time }}"
-          - name: namespace
-            value: "{{ $sys.namespace }}"
-          - name: instanceId
-            value: "{{ $sys.instanceId }}"
-          - name: method
-            value: "{{ $var.backupMethod }}"
-      templates:
-        - name: backup
-          inputs:
+      backup:
+
+        workflow:
+          entrypoint: backup
+          arguments:
             parameters:
               - name: snapshotId
+                value: "{{ $sys.snapshot.id }}"
               - name: snapshotTime
+                value: "{{ $sys.snapshot.time }}"
               - name: namespace
+                value: "{{ $sys.namespace }}"
               - name: instanceId
+                value: "{{ $sys.instanceId }}"
               - name: method
-          dag:
-            tasks:
-              - name: createBackupCR
-                template: apply-backup
-                arguments:
-                  parameters:
-                    - name: snapshotId
-                      value: "{{inputs.parameters.snapshotId}}"
-                    - name: snapshotTime
-                      value: "{{inputs.parameters.snapshotTime}}"
-                    - name: namespace
-                      value: "{{inputs.parameters.namespace}}"
-                    - name: instanceId
-                      value: "{{inputs.parameters.instanceId}}"
-                    - name: method
-                      value: "{{inputs.parameters.method}}"
-        - name: apply-backup
-          inputs:
-            parameters:
-              - name: snapshotId
-              - name: snapshotTime
-              - name: namespace
-              - name: instanceId
-              - name: method
-          resource:
-            action: apply
-            successCondition: status.phase == completed
-            failureCondition: status.phase == failed
-            manifest: |
-              apiVersion: postgresql.cnpg.io/v1
-              kind: Backup
-              metadata:
-                name: "{{inputs.parameters.snapshotId}}"
-                namespace: "{{inputs.parameters.namespace}}"
-                annotations:
-                  omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
-                  omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
-              spec:
-                method: "{{inputs.parameters.method}}"
-                cluster:
-                  name: "{{inputs.parameters.instanceId}}"
+                value: "{{ $var.backupMethod }}"
+          templates:
+            - name: backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+                  - name: method
+              dag:
+                tasks:
+                  - name: createBackupCR
+                    template: apply-backup
+                    arguments:
+                      parameters:
+                        - name: snapshotId
+                          value: "{{inputs.parameters.snapshotId}}"
+                        - name: snapshotTime
+                          value: "{{inputs.parameters.snapshotTime}}"
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: method
+                          value: "{{inputs.parameters.method}}"
+            - name: apply-backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+                  - name: method
+              resource:
+                action: apply
+                successCondition: status.phase == completed
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Backup
+                  metadata:
+                    name: "{{inputs.parameters.snapshotId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
+                      omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
+                  spec:
+                    method: "{{inputs.parameters.method}}"
+                    cluster:
+                      name: "{{inputs.parameters.instanceId}}"
 
-  restore:
-    workflow:
-      entrypoint: restore
-      arguments:
-        parameters:
-          - name: namespace
-            value: "{{ $sys.namespace }}"
-          - name: restoreSnapshotId
-            value: "{{ $sys.restore.snapshotId }}"
-          - name: restoreSnapshotTime
-            value: "{{ $sys.restore.snapshotTime }}"
-          - name: newClusterName
-            value: "{{ $sys.targetInstanceId }}"
-          - name: instances
-            value: "{{ $var.numberOfInstances }}"
-          - name: storageSize
-            value: "{{ $var.storageSize }}"
-      templates:
-        - name: restore
-          inputs:
+      restore:
+        workflow:
+          entrypoint: restore
+          arguments:
             parameters:
               - name: namespace
+                value: "{{ $sys.namespace }}"
               - name: restoreSnapshotId
+                value: "{{ $sys.restore.snapshotId }}"
               - name: restoreSnapshotTime
+                value: "{{ $sys.restore.snapshotTime }}"
               - name: newClusterName
+                value: "{{ $sys.targetInstanceId }}"
               - name: instances
+                value: "{{ $var.numberOfInstances }}"
               - name: storageSize
-          dag:
-            tasks:
-              - name: createCluster
-                template: apply-cluster
-                arguments:
-                  parameters:
-                    - name: namespace
-                      value: "{{inputs.parameters.namespace}}"
-                    - name: restoreSnapshotId
-                      value: "{{inputs.parameters.restoreSnapshotId}}"
-                    - name: restoreSnapshotTime
-                      value: "{{inputs.parameters.restoreSnapshotTime}}"
-                    - name: newClusterName
-                      value: "{{inputs.parameters.newClusterName}}"
-                    - name: instances
-                      value: "{{inputs.parameters.instances}}"
-                    - name: storageSize
-                      value: "{{inputs.parameters.storageSize}}"
-        - name: apply-cluster
-          inputs:
-            parameters:
-              - name: namespace
-              - name: restoreSnapshotId
-              - name: restoreSnapshotTime
-              - name: newClusterName
-              - name: instances
-              - name: storageSize
-          resource:
-            action: apply
-            successCondition: status.conditions.#(type=="Ready").status == True
-            manifest: |
-              apiVersion: postgresql.cnpg.io/v1
-              kind: Cluster
-              metadata:
-                name: "{{inputs.parameters.newClusterName}}"
-                namespace: "{{inputs.parameters.namespace}}"
-                annotations:
-                  omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
-                  omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
-              spec:
-                instances: {{inputs.parameters.instances}}
-                storage:
-                  size: "{{inputs.parameters.storageSize}}"
-                bootstrap:
-                  recovery:
-                    backup:
-                      name: "{{inputs.parameters.restoreSnapshotId}}"
-
-  deleteBackup:
-    workflow:
-      entrypoint: deleteBackup
-      arguments:
-        parameters:
-          - name: snapshotId
-            value: "{{ $sys.snapshot.id }}"
-          - name: snapshotTime
-            value: "{{ $sys.snapshot.time }}"
-          - name: namespace
-            value: "{{ $sys.namespace }}"
-          - name: instanceId
-            value: "{{ $sys.instanceId }}"
-      templates:
-        - name: deleteBackup
-          inputs:
-            parameters:
-              - name: snapshotId
-              - name: snapshotTime
-              - name: namespace
-              - name: instanceId
-          dag:
-            tasks:
-              - name: deleteBackupCR
-                template: delete-backup
-                arguments:
-                  parameters:
-                    - name: snapshotId
-                      value: "{{inputs.parameters.snapshotId}}"
-                    - name: snapshotTime
-                      value: "{{inputs.parameters.snapshotTime}}"
-                    - name: namespace
-                      value: "{{inputs.parameters.namespace}}"
-                    - name: instanceId
-                      value: "{{inputs.parameters.instanceId}}"
-        - name: delete-backup
-          inputs:
-            parameters:
-              - name: snapshotId
-              - name: snapshotTime
-              - name: namespace
-              - name: instanceId
-          resource:
-            action: delete
-            manifest: |
-              apiVersion: postgresql.cnpg.io/v1
-              kind: Backup
-              metadata:
-                name: "{{inputs.parameters.snapshotId}}"
-                namespace: "{{inputs.parameters.namespace}}"
-                annotations:
-                  omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
-                  omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
-
-# Custom operator workflows with inline workflow definitions
-customWorkflows:
-- verb: failover
-  displayName: Force failover
-  description: Delete the current primary pod and let CloudNativePG promote the most suitable replica.
-  scope:
-    - fleet
-  apiParameters:
-    - key: primaryPodName
-      displayName: Primary Pod Name
-      description: Name of the current CloudNativePG primary pod to delete.
-      type: String
-      required: true
-  workflow:
-    entrypoint: failover
-    arguments:
-      parameters:
-        - name: namespace
-          value: "{{ $sys.namespace }}"
-        - name: instanceId
-          value: "{{ $sys.instanceId }}"
-        - name: primaryPodName
-          value: "{{ $var.primaryPodName }}"
-    templates:
-      - name: failover
-        inputs:
-          parameters:
-            - name: namespace
-            - name: instanceId
-            - name: primaryPodName
-        dag:
-          tasks:
-            - name: deletePrimaryPod
-              template: delete-primary-pod
-              arguments:
+                value: "{{ $var.storageSize }}"
+          templates:
+            - name: restore
+              inputs:
                 parameters:
                   - name: namespace
-                    value: "{{inputs.parameters.namespace}}"
+                  - name: restoreSnapshotId
+                  - name: restoreSnapshotTime
+                  - name: newClusterName
+                  - name: instances
+                  - name: storageSize
+              dag:
+                tasks:
+                  - name: createCluster
+                    template: apply-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: restoreSnapshotId
+                          value: "{{inputs.parameters.restoreSnapshotId}}"
+                        - name: restoreSnapshotTime
+                          value: "{{inputs.parameters.restoreSnapshotTime}}"
+                        - name: newClusterName
+                          value: "{{inputs.parameters.newClusterName}}"
+                        - name: instances
+                          value: "{{inputs.parameters.instances}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+            - name: apply-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: restoreSnapshotId
+                  - name: restoreSnapshotTime
+                  - name: newClusterName
+                  - name: instances
+                  - name: storageSize
+              resource:
+                action: apply
+                successCondition: status.conditions.#(type=="Ready").status == True
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.newClusterName}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
+                      omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
+                  spec:
+                    instances: {{inputs.parameters.instances}}
+                    storage:
+                      size: "{{inputs.parameters.storageSize}}"
+                    bootstrap:
+                      recovery:
+                        backup:
+                          name: "{{inputs.parameters.restoreSnapshotId}}"
+
+      deleteBackup:
+        workflow:
+          entrypoint: deleteBackup
+          arguments:
+            parameters:
+              - name: snapshotId
+                value: "{{ $sys.snapshot.id }}"
+              - name: snapshotTime
+                value: "{{ $sys.snapshot.time }}"
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: deleteBackup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
                   - name: instanceId
-                    value: "{{inputs.parameters.instanceId}}"
-                  - name: primaryPodName
-                    value: "{{inputs.parameters.primaryPodName}}"
-      - name: delete-primary-pod
-        inputs:
+              dag:
+                tasks:
+                  - name: deleteBackupCR
+                    template: delete-backup
+                    arguments:
+                      parameters:
+                        - name: snapshotId
+                          value: "{{inputs.parameters.snapshotId}}"
+                        - name: snapshotTime
+                          value: "{{inputs.parameters.snapshotTime}}"
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+            - name: delete-backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Backup
+                  metadata:
+                    name: "{{inputs.parameters.snapshotId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
+                      omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
+
+    # Custom operator workflows with inline workflow definitions
+    customWorkflows:
+    - verb: failover
+      displayName: Force failover
+      description: Delete the current primary pod and let CloudNativePG promote the most suitable replica.
+      scope:
+        - fleet
+      apiParameters:
+        - key: primaryPodName
+          displayName: Primary Pod Name
+          description: Name of the current CloudNativePG primary pod to delete.
+          type: String
+          required: true
+      workflow:
+        entrypoint: failover
+        arguments:
           parameters:
             - name: namespace
+              value: "{{ $sys.namespace }}"
             - name: instanceId
+              value: "{{ $sys.instanceId }}"
             - name: primaryPodName
-        resource:
-          action: delete
-          manifest: |
-            apiVersion: v1
-            kind: Pod
-            metadata:
-              name: "{{inputs.parameters.primaryPodName}}"
-              namespace: "{{inputs.parameters.namespace}}"
-              labels:
-                postgresql: "{{inputs.parameters.instanceId}}"
+              value: "{{ $var.primaryPodName }}"
+        templates:
+          - name: failover
+            inputs:
+              parameters:
+                - name: namespace
+                - name: instanceId
+                - name: primaryPodName
+            dag:
+              tasks:
+                - name: deletePrimaryPod
+                  template: delete-primary-pod
+                  arguments:
+                    parameters:
+                      - name: namespace
+                        value: "{{inputs.parameters.namespace}}"
+                      - name: instanceId
+                        value: "{{inputs.parameters.instanceId}}"
+                      - name: primaryPodName
+                        value: "{{inputs.parameters.primaryPodName}}"
+          - name: delete-primary-pod
+            inputs:
+              parameters:
+                - name: namespace
+                - name: instanceId
+                - name: primaryPodName
+            resource:
+              action: delete
+              manifest: |
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  name: "{{inputs.parameters.primaryPodName}}"
+                  namespace: "{{inputs.parameters.namespace}}"
+                  labels:
+                    postgresql: "{{inputs.parameters.instanceId}}"

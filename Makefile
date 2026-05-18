@@ -3,7 +3,7 @@ SERVICE_PLAN="Postgres Operator"
 MAIN_RESOURCE_NAME=CNPG
 ENVIRONMENT=Dev
 CLOUD_PROVIDER=aws
-REGION=us-east-1
+REGION=ap-south-1
 
 # Load variables from .env if it exists
 ifneq (,$(wildcard .env))
