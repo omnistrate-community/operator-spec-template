@@ -88,14 +88,11 @@ services:
           - 5432
         primary: false
         networkingType: PUBLIC
-        
+
     operatorCRDConfiguration:
       # Deprecated fields intentionally omitted:
-      # template, supplementalFiles.
-      # CNPG lifecycle is managed by systemWorkflows.create/update/delete.
-      readinessConditions:
-        "$var._crd.status.phase": "Cluster in healthy state"
-        '$var._crd.status.conditions[?(@.type=="Ready")].status': "True"
+      # template, supplementalFiles, readinessConditions.
+      # CNPG lifecycle readiness is managed by systemWorkflows.* resource successCondition.
 
       outputParameters:
         "Postgres Container Image": "$var._crd.status.image"
@@ -108,7 +105,7 @@ services:
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
 
-    capabilities:    
+    capabilities:
       backupConfiguration:
         backupRetentionInDays: 7
         backupPeriodInHours: 24
