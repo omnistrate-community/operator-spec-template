@@ -323,7 +323,7 @@ services:
                                 type: LoadBalancer
                             updateStrategy: patch
 
-      update:
+      modify:
         workflow:
           entrypoint: update
           arguments:
