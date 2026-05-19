@@ -91,13 +91,9 @@ services:
 
     operatorCRDConfiguration:
       # Deprecated fields intentionally omitted:
-      # template, supplementalFiles, readinessConditions.
-      # CNPG lifecycle readiness is managed by systemWorkflows.* resource successCondition.
-
-      outputParameters:
-        "Postgres Container Image": "$var._crd.status.image"
-        "Status": "$var._crd.status.phase"
-        "Topology": "$var._crd.status.topology"
+      # template, supplementalFiles, readinessConditions, outputParameters.
+      # CNPG lifecycle readiness and outputs are managed by systemWorkflows.* resource successCondition
+      # and workflow-level outputParameters.
 
       helmChartDependencies:
         - chartName: cloudnative-pg
@@ -114,6 +110,10 @@ services:
     systemWorkflows:
 
       create:
+        outputParameters:
+          "Postgres Container Image": "$tasks.applycluster.resource.status.image"
+          "Status": "$tasks.applycluster.resource.status.phase"
+          "Topology": "$tasks.applycluster.resource.status.topology"
         workflow:
           entrypoint: create
           arguments:
@@ -321,6 +321,10 @@ services:
                             updateStrategy: patch
 
       modify:
+        outputParameters:
+          "Postgres Container Image": "$tasks.applycluster.resource.status.image"
+          "Status": "$tasks.applycluster.resource.status.phase"
+          "Topology": "$tasks.applycluster.resource.status.topology"
         workflow:
           entrypoint: update
           arguments:
