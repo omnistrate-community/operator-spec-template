@@ -45,10 +45,11 @@ Make sure to keep this file secure and never commit it to version control.
 
 The service spec demonstrates CloudNativePG lifecycle workflows:
 
-- `operatorCRDConfiguration` keeps `readinessConditions`, `outputParameters`, and the CNPG Helm chart dependency. The deprecated `template` and `supplementalFiles` fields are intentionally omitted.
+- `operatorCRDConfiguration` keeps `outputParameters` and the CNPG Helm chart dependency. The deprecated `template`, `supplementalFiles`, and `readinessConditions` fields are intentionally omitted when lifecycle is managed by system workflows.
 - `systemWorkflows.create` creates the `basic-auth` secret, applies the CNPG `Cluster` resource through an Argo DAG, and waits for the CNPG Ready condition.
-- `systemWorkflows.update` reapplies the CNPG `Cluster` resource through an Argo DAG and waits for the CNPG Ready condition.
+- `systemWorkflows.modify` reapplies the CNPG `Cluster` resource through an Argo DAG and waits for the CNPG Ready condition.
 - `systemWorkflows.delete` deletes the CNPG `Cluster` resource and then deletes the `basic-auth` secret.
+- CREATE and MODIFY readiness is expressed on the workflow resource tasks with `successCondition`, for example `status.conditions.#(type=="Ready").status == True`.
 - `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled.
 - `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`.
 - `systemWorkflows.deleteBackup` is used by explicit snapshot deletion and retention cleanup. It receives the same `$sys.snapshot.*` values as backup.
