@@ -111,9 +111,9 @@ services:
 
       create:
         outputParameters:
-          "Postgres Container Image": "$tasks.applycluster.resource.status.image"
-          "Status": "$tasks.applycluster.resource.status.phase"
-          "Topology": "$tasks.applycluster.resource.status.topology"
+          postgresContainerImage: "$tasks.applycluster.resource.status.image"
+          status: "$tasks.applycluster.resource.status.phase"
+          topology: "$tasks.applycluster.resource.status.topology"
         workflow:
           entrypoint: create
           arguments:
@@ -322,9 +322,9 @@ services:
 
       modify:
         outputParameters:
-          "Postgres Container Image": "$tasks.applycluster.resource.status.image"
-          "Status": "$tasks.applycluster.resource.status.phase"
-          "Topology": "$tasks.applycluster.resource.status.topology"
+          postgresContainerImage: "$tasks.applycluster.resource.status.image"
+          status: "$tasks.applycluster.resource.status.phase"
+          topology: "$tasks.applycluster.resource.status.topology"
         workflow:
           entrypoint: update
           arguments:
