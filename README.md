@@ -16,6 +16,7 @@ Before using the make commands, you need to set up the following configuration f
 
    ```bash
    OMNISTRATE_EMAIL=your-email@example.com
+   POSTGRESQL_PASSWORD=your-postgres-password
    ```
 
 2. `.omnistrate.password` file:
@@ -34,8 +35,9 @@ Make sure to keep this file secure and never commit it to version control.
 - `make release`: Builds and releases the service using the compose.yaml configuration
 - `make create`: Creates a new instance of the service with the following defaults:
   - Environment: Dev
-  - Cloud Provider: Azure
-  - Region: eastus2
+  - Cloud Provider: AWS
+  - Region: ap-south-1
+  - PostgreSQL password: read from `POSTGRESQL_PASSWORD`
 - `make list`: Lists all instances in JSON format
 - `make delete-all`: Deletes all running instances immediately
 - `make delete-all-wait`: Deletes all instances and waits for completion

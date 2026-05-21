@@ -30,7 +30,12 @@ release:
 
 .PHONY: create
 create:
-	@omnistrate-ctl instance create --environment ${ENVIRONMENT} --cloud-provider ${CLOUD_PROVIDER} --region ${REGION} --plan ${SERVICE_PLAN} --service ${SERVICE_NAME} --resource ${MAIN_RESOURCE_NAME} 
+	@if [ -z "$$POSTGRESQL_PASSWORD" ]; then \
+		echo "POSTGRESQL_PASSWORD environment variable is required. Set it in .env or export it before running make create."; \
+		exit 1; \
+	fi
+	@params=$$(jq -cn --arg postgresqlPassword "$$POSTGRESQL_PASSWORD" '{postgresqlPassword: $$postgresqlPassword}'); \
+	omnistrate-ctl instance create --environment ${ENVIRONMENT} --cloud-provider ${CLOUD_PROVIDER} --region ${REGION} --plan ${SERVICE_PLAN} --service ${SERVICE_NAME} --resource ${MAIN_RESOURCE_NAME} --param "$$params"
 
 .PHONY: list
 list:
