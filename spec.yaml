@@ -67,14 +67,6 @@ services:
         required: false
         export: true
         defaultValue: "20Gi"
-      - key: backupMethod
-        description: CloudNativePG backup method to use for manual, periodic, and delete-triggered backups
-        name: Backup Method
-        type: String
-        modifiable: true
-        required: false
-        export: true
-        defaultValue: "barmanObjectStore"
     endpointConfiguration:
       writer:
         host: "$sys.network.externalClusterEndpoint"
@@ -97,9 +89,19 @@ services:
 
       helmChartDependencies:
         - chartName: cloudnative-pg
-          chartVersion: 0.26.0
+          chartVersion: 0.28.2
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
+          chartValues:
+            config:
+              clusterWide: false
+        - chartName: plugin-barman-cloud
+          chartVersion: 0.6.0
+          chartRepoName: cnpg
+          chartRepoURL: https://cloudnative-pg.github.io/charts
+          chartValues:
+            config:
+              namespaceOverride: cnpg-system
 
     capabilities:
       backupConfiguration:
@@ -568,8 +570,6 @@ services:
                 value: "{{ $sys.namespace }}"
               - name: instanceId
                 value: "{{ $sys.instanceId }}"
-              - name: method
-                value: "{{ $var.backupMethod }}"
           templates:
             - name: backup
               inputs:
@@ -578,7 +578,6 @@ services:
                   - name: snapshotTime
                   - name: namespace
                   - name: instanceId
-                  - name: method
               dag:
                 tasks:
                   - name: createBackupCR
@@ -593,8 +592,6 @@ services:
                           value: "{{inputs.parameters.namespace}}"
                         - name: instanceId
                           value: "{{inputs.parameters.instanceId}}"
-                        - name: method
-                          value: "{{inputs.parameters.method}}"
             - name: apply-backup
               inputs:
                 parameters:
@@ -602,7 +599,6 @@ services:
                   - name: snapshotTime
                   - name: namespace
                   - name: instanceId
-                  - name: method
               resource:
                 action: apply
                 successCondition: status.phase == completed
@@ -617,7 +613,7 @@ services:
                       omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
                       omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
                   spec:
-                    method: "{{inputs.parameters.method}}"
+                    method: barmanObjectStore
                     cluster:
                       name: "{{inputs.parameters.instanceId}}"
 
