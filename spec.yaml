@@ -71,30 +71,30 @@ services:
         description: S3 bucket used for PostgreSQL backups
         name: Backup S3 Bucket Name
         type: String
-        modifiable: false
+        modifiable: true
         required: true
-        export: false
+        export: true
       - key: backupS3BucketRegion
         description: AWS region where the PostgreSQL backup S3 bucket is located
         name: Backup S3 Bucket Region
         type: String
-        modifiable: false
+        modifiable: true
         required: true
-        export: false
+        export: true
       - key: backupS3AccessKeyId
         description: AWS access key ID used to write PostgreSQL backups to S3
         name: Backup S3 Access Key ID
         type: String
-        modifiable: false
+        modifiable: true
         required: true
-        export: false
+        export: true
       - key: backupS3SecretAccessKey
         description: AWS secret access key used to write PostgreSQL backups to S3
         name: Backup S3 Secret Access Key
         type: Password
-        modifiable: false
+        modifiable: true
         required: true
-        export: false
+        export: true
     endpointConfiguration:
       writer:
         host: "$sys.network.externalClusterEndpoint"
