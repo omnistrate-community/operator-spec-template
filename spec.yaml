@@ -235,7 +235,7 @@ services:
                   - name: publicSubnetIds
               resource:
                 action: apply
-                successCondition: status.conditions.#(type=="Ready").status == True
+                successCondition: status.instances == {{inputs.parameters.numberOfInstances}} && status.readyInstances == {{inputs.parameters.numberOfInstances}}
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -410,7 +410,7 @@ services:
                   - name: publicSubnetIds
               resource:
                 action: apply
-                successCondition: status.conditions.#(type=="Ready").status == True
+                successCondition: status.instances == {{inputs.parameters.numberOfInstances}} && status.readyInstances == {{inputs.parameters.numberOfInstances}}
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -677,7 +677,7 @@ services:
                   - name: storageSize
               resource:
                 action: apply
-                successCondition: status.conditions.#(type=="Ready").status == True
+                successCondition: status.instances == {{inputs.parameters.instances}} && status.readyInstances == {{inputs.parameters.instances}}
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
