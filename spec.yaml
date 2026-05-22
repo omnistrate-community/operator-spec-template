@@ -67,6 +67,34 @@ services:
         required: false
         export: true
         defaultValue: "20Gi"
+      - key: backupS3BucketName
+        description: S3 bucket used for PostgreSQL backups
+        name: Backup S3 Bucket Name
+        type: String
+        modifiable: false
+        required: true
+        export: false
+      - key: backupS3BucketRegion
+        description: AWS region where the PostgreSQL backup S3 bucket is located
+        name: Backup S3 Bucket Region
+        type: String
+        modifiable: false
+        required: true
+        export: false
+      - key: backupS3AccessKeyId
+        description: AWS access key ID used to write PostgreSQL backups to S3
+        name: Backup S3 Access Key ID
+        type: String
+        modifiable: false
+        required: true
+        export: false
+      - key: backupS3SecretAccessKey
+        description: AWS secret access key used to write PostgreSQL backups to S3
+        name: Backup S3 Secret Access Key
+        type: Password
+        modifiable: false
+        required: true
+        export: false
     endpointConfiguration:
       writer:
         host: "$sys.network.externalClusterEndpoint"
@@ -92,16 +120,10 @@ services:
           chartVersion: 0.28.2
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
-          chartValues:
-            config:
-              clusterWide: false
         - chartName: plugin-barman-cloud
           chartVersion: 0.6.0
           chartRepoName: cnpg
           chartRepoURL: https://cloudnative-pg.github.io/charts
-          chartValues:
-            config:
-              namespaceOverride: cnpg-system
 
     capabilities:
       backupConfiguration:
@@ -132,6 +154,14 @@ services:
                 value: "{{ $func.base64encode($var.postgresqlUsername) }}"
               - name: postgresqlPasswordEncoded
                 value: "{{ $func.base64encode($var.postgresqlPassword) }}"
+              - name: backupS3BucketName
+                value: "{{ $var.backupS3BucketName }}"
+              - name: backupS3BucketRegionEncoded
+                value: "{{ $func.base64encode($var.backupS3BucketRegion) }}"
+              - name: backupS3AccessKeyIdEncoded
+                value: "{{ $func.base64encode($var.backupS3AccessKeyId) }}"
+              - name: backupS3SecretAccessKeyEncoded
+                value: "{{ $func.base64encode($var.backupS3SecretAccessKey) }}"
               - name: numberOfInstances
                 value: "{{ $var.numberOfInstances }}"
               - name: storageSize
@@ -156,6 +186,10 @@ services:
                   - name: postgresqlDatabase
                   - name: postgresqlUsernameEncoded
                   - name: postgresqlPasswordEncoded
+                  - name: backupS3BucketName
+                  - name: backupS3BucketRegionEncoded
+                  - name: backupS3AccessKeyIdEncoded
+                  - name: backupS3SecretAccessKeyEncoded
                   - name: numberOfInstances
                   - name: storageSize
                   - name: externalClusterEndpoint
@@ -175,10 +209,37 @@ services:
                           value: "{{inputs.parameters.postgresqlUsernameEncoded}}"
                         - name: postgresqlPasswordEncoded
                           value: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+                  - name: createbackupsecret
+                    template: apply-backup-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: backupS3AccessKeyIdEncoded
+                          value: "{{inputs.parameters.backupS3AccessKeyIdEncoded}}"
+                        - name: backupS3SecretAccessKeyEncoded
+                          value: "{{inputs.parameters.backupS3SecretAccessKeyEncoded}}"
+                        - name: backupS3BucketRegionEncoded
+                          value: "{{inputs.parameters.backupS3BucketRegionEncoded}}"
+                  - name: createobjectstore
+                    template: apply-object-store
+                    dependencies:
+                      - createbackupsecret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: backupS3BucketName
+                          value: "{{inputs.parameters.backupS3BucketName}}"
                   - name: applycluster
                     template: apply-cluster
                     dependencies:
                       - createsecret
+                      - createobjectstore
                     arguments:
                       parameters:
                         - name: namespace
@@ -221,6 +282,56 @@ services:
                   data:
                     username: "{{inputs.parameters.postgresqlUsernameEncoded}}"
                     password: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+            - name: apply-backup-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: backupS3AccessKeyIdEncoded
+                  - name: backupS3SecretAccessKeyEncoded
+                  - name: backupS3BucketRegionEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3-credentials"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: Opaque
+                  data:
+                    ACCESS_KEY_ID: "{{inputs.parameters.backupS3AccessKeyIdEncoded}}"
+                    ACCESS_SECRET_KEY: "{{inputs.parameters.backupS3SecretAccessKeyEncoded}}"
+                    REGION: "{{inputs.parameters.backupS3BucketRegionEncoded}}"
+            - name: apply-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: backupS3BucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.instanceId}}"
+                      s3Credentials:
+                        accessKeyId:
+                          name: "{{inputs.parameters.instanceId}}-s3-credentials"
+                          key: ACCESS_KEY_ID
+                        secretAccessKey:
+                          name: "{{inputs.parameters.instanceId}}-s3-credentials"
+                          key: ACCESS_SECRET_KEY
+                        region:
+                          name: "{{inputs.parameters.instanceId}}-s3-credentials"
+                          key: REGION
+                      data:
+                        compression: gzip
             - name: apply-cluster
               inputs:
                 parameters:
@@ -246,6 +357,10 @@ services:
                     namespace: "{{inputs.parameters.namespace}}"
                   spec:
                     enablePDB: true
+                    plugins:
+                      - name: barman-cloud.cloudnative-pg.io
+                        parameters:
+                          barmanObjectName: "{{inputs.parameters.instanceId}}-s3"
                     bootstrap:
                       initdb:
                         owner: "{{inputs.parameters.postgresqlUsername}}"
@@ -421,6 +536,10 @@ services:
                     namespace: "{{inputs.parameters.namespace}}"
                   spec:
                     enablePDB: true
+                    plugins:
+                      - name: barman-cloud.cloudnative-pg.io
+                        parameters:
+                          barmanObjectName: "{{inputs.parameters.instanceId}}-s3"
                     bootstrap:
                       initdb:
                         owner: "{{inputs.parameters.postgresqlUsername}}"
@@ -530,6 +649,26 @@ services:
                       parameters:
                         - name: namespace
                           value: "{{inputs.parameters.namespace}}"
+                  - name: deleteobjectstore
+                    template: delete-object-store
+                    dependencies:
+                      - deletecluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                  - name: deletebackupsecret
+                    template: delete-backup-secret
+                    dependencies:
+                      - deleteobjectstore
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
             - name: delete-cluster
               inputs:
                 parameters:
@@ -554,6 +693,32 @@ services:
                   kind: Secret
                   metadata:
                     name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-backup-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3-credentials"
                     namespace: "{{inputs.parameters.namespace}}"
 
       backup:
@@ -613,7 +778,9 @@ services:
                       omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
                       omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
                   spec:
-                    method: barmanObjectStore
+                    method: plugin
+                    pluginConfiguration:
+                      name: barman-cloud.cloudnative-pg.io
                     cluster:
                       name: "{{inputs.parameters.instanceId}}"
 

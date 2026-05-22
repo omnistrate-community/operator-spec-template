@@ -37,7 +37,29 @@ create:
 		echo "POSTGRESQL_PASSWORD environment variable is required. Set it in .env or export it before running make create."; \
 		exit 1; \
 	fi
-	@params=$$(jq -cn --arg postgresqlPassword "$$POSTGRESQL_PASSWORD" '{postgresqlPassword: $$postgresqlPassword}'); \
+	@if [ -z "$$BACKUP_S3_BUCKET_NAME" ]; then \
+		echo "BACKUP_S3_BUCKET_NAME environment variable is required. Set it in .env or export it before running make create."; \
+		exit 1; \
+	fi
+	@if [ -z "$$BACKUP_S3_BUCKET_REGION" ]; then \
+		echo "BACKUP_S3_BUCKET_REGION environment variable is required. Set it in .env or export it before running make create."; \
+		exit 1; \
+	fi
+	@if [ -z "$$BACKUP_S3_ACCESS_KEY_ID" ]; then \
+		echo "BACKUP_S3_ACCESS_KEY_ID environment variable is required. Set it in .env or export it before running make create."; \
+		exit 1; \
+	fi
+	@if [ -z "$$BACKUP_S3_SECRET_ACCESS_KEY" ]; then \
+		echo "BACKUP_S3_SECRET_ACCESS_KEY environment variable is required. Set it in .env or export it before running make create."; \
+		exit 1; \
+	fi
+	@params=$$(jq -cn \
+		--arg postgresqlPassword "$$POSTGRESQL_PASSWORD" \
+		--arg backupS3BucketName "$$BACKUP_S3_BUCKET_NAME" \
+		--arg backupS3BucketRegion "$$BACKUP_S3_BUCKET_REGION" \
+		--arg backupS3AccessKeyId "$$BACKUP_S3_ACCESS_KEY_ID" \
+		--arg backupS3SecretAccessKey "$$BACKUP_S3_SECRET_ACCESS_KEY" \
+		'{postgresqlPassword: $$postgresqlPassword, backupS3BucketName: $$backupS3BucketName, backupS3BucketRegion: $$backupS3BucketRegion, backupS3AccessKeyId: $$backupS3AccessKeyId, backupS3SecretAccessKey: $$backupS3SecretAccessKey}'); \
 	omnistrate-ctl instance create --environment "$(ENVIRONMENT)" --cloud-provider "$(CLOUD_PROVIDER)" --region "$(REGION)" --plan "$(SERVICE_PLAN)" --service "$(SERVICE_NAME)" --resource "$(MAIN_RESOURCE_NAME)" --param "$$params" --output json
 
 .PHONY: list
