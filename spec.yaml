@@ -722,7 +722,9 @@ services:
                     namespace: "{{inputs.parameters.namespace}}"
 
       backup:
-
+        outputParameters:
+          backupId: "$tasks.createBackupCR.resource.status.backupId"
+          backupName: "$tasks.createBackupCR.resource.status.backupName"
         workflow:
           entrypoint: backup
           arguments:
@@ -795,6 +797,12 @@ services:
                 value: "{{ $sys.restore.snapshotId }}"
               - name: restoreSnapshotTime
                 value: "{{ $sys.restore.snapshotTime }}"
+              - name: backupId
+                value: "{{ $sys.restore.metadata.backupId }}"
+              - name: backupName
+                value: "{{ $sys.restore.metadata.backupName }}"
+              - name: sourceBackupObjectName
+                value: "{{ $sys.restore.snapshotId }}"
               - name: newClusterName
                 value: "{{ $sys.targetInstanceId }}"
               - name: instances
@@ -808,6 +816,9 @@ services:
                   - name: namespace
                   - name: restoreSnapshotId
                   - name: restoreSnapshotTime
+                  - name: backupId
+                  - name: backupName
+                  - name: sourceBackupObjectName
                   - name: newClusterName
                   - name: instances
                   - name: storageSize
@@ -823,6 +834,12 @@ services:
                           value: "{{inputs.parameters.restoreSnapshotId}}"
                         - name: restoreSnapshotTime
                           value: "{{inputs.parameters.restoreSnapshotTime}}"
+                        - name: backupId
+                          value: "{{inputs.parameters.backupId}}"
+                        - name: backupName
+                          value: "{{inputs.parameters.backupName}}"
+                        - name: sourceBackupObjectName
+                          value: "{{inputs.parameters.sourceBackupObjectName}}"
                         - name: newClusterName
                           value: "{{inputs.parameters.newClusterName}}"
                         - name: instances
@@ -835,6 +852,9 @@ services:
                   - name: namespace
                   - name: restoreSnapshotId
                   - name: restoreSnapshotTime
+                  - name: backupId
+                  - name: backupName
+                  - name: sourceBackupObjectName
                   - name: newClusterName
                   - name: instances
                   - name: storageSize
@@ -850,6 +870,8 @@ services:
                     annotations:
                       omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
                       omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
+                      omnistrate.io/backup-id: "{{inputs.parameters.backupId}}"
+                      omnistrate.io/backup-name: "{{inputs.parameters.backupName}}"
                   spec:
                     instances: {{inputs.parameters.instances}}
                     storage:
@@ -857,7 +879,7 @@ services:
                     bootstrap:
                       recovery:
                         backup:
-                          name: "{{inputs.parameters.restoreSnapshotId}}"
+                          name: "{{inputs.parameters.sourceBackupObjectName}}"
 
       deleteBackup:
         workflow:
