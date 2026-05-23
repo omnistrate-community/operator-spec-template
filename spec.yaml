@@ -961,6 +961,8 @@ services:
                       resizeInUseVolumes: true
                       size: "{{inputs.parameters.storageSize}}"
                       storageClass: gp3
+                    # Recovery restores database, role, and password state from the selected backup.
+                    # Do not combine CNPG recovery with the create-time initdb/basic-auth bootstrap.
                     bootstrap:
                       recovery:
                         source: clusterBackup
