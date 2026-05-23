@@ -817,6 +817,16 @@ services:
                 value: "{{ $func.base64encode($var.backupS3AccessKeyId) }}"
               - name: backupS3SecretAccessKeyEncoded
                 value: "{{ $func.base64encode($var.backupS3SecretAccessKey) }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: publicSubnetIds
+                value: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
           templates:
             - name: restore
               inputs:
@@ -834,6 +844,11 @@ services:
                   - name: backupS3BucketRegionEncoded
                   - name: backupS3AccessKeyIdEncoded
                   - name: backupS3SecretAccessKeyEncoded
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
               dag:
                 tasks:
                   - name: createRestoreBackupSecret
@@ -876,6 +891,16 @@ services:
                           value: "{{inputs.parameters.storageSize}}"
                         - name: backupS3BucketName
                           value: "{{inputs.parameters.backupS3BucketName}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: publicSubnetIds
+                          value: "{{inputs.parameters.publicSubnetIds}}"
             - name: apply-restore-backup-secret
               inputs:
                 parameters:
@@ -890,7 +915,7 @@ services:
                   apiVersion: v1
                   kind: Secret
                   metadata:
-                    name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                    name: "{{inputs.parameters.newClusterName}}-s3-credentials"
                     namespace: "{{inputs.parameters.namespace}}"
                   type: Opaque
                   data:
@@ -910,6 +935,11 @@ services:
                   - name: instances
                   - name: storageSize
                   - name: backupS3BucketName
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: publicSubnetIds
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.instances}}, status.readyInstances == {{inputs.parameters.instances}}
@@ -925,9 +955,12 @@ services:
                       omnistrate.io/backup-id: "{{inputs.parameters.backupId}}"
                       omnistrate.io/backup-name: "{{inputs.parameters.backupName}}"
                   spec:
+                    enablePDB: true
                     instances: {{inputs.parameters.instances}}
                     storage:
+                      resizeInUseVolumes: true
                       size: "{{inputs.parameters.storageSize}}"
+                      storageClass: gp3
                     bootstrap:
                       recovery:
                         source: clusterBackup
@@ -939,16 +972,80 @@ services:
                           destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.sourceInstanceId}}"
                           s3Credentials:
                             accessKeyId:
-                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
                               key: ACCESS_KEY_ID
                             secretAccessKey:
-                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
                               key: ACCESS_SECRET_KEY
                             region:
-                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
                               key: REGION
                           wal:
                             maxParallel: 8
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                              - key: omnistrate.com/managed-by
+                                operator: In
+                                values:
+                                - omnistrate
+                              - key: topology.kubernetes.io/region
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.region}}"
+                              - key: node.kubernetes.io/instance-type
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.instanceType}}"
+                              - key: omnistrate.com/resource
+                                operator: In
+                                values:
+                                - "{{inputs.parameters.resourceId}}"
+                    managed:
+                      services:
+                        additional:
+                          - selectorType: ro
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.newClusterName}}-cluster-ro"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
+                          - selectorType: rw
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.newClusterName}}-cluster-rw"
+                                annotations:
+                                    external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                    external-dns.alpha.kubernetes.io/ttl: "60"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
+                                    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                    service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                    service.beta.kubernetes.io/aws-load-balancer-type: external
+                                    service.beta.kubernetes.io/load-balancer-source-ranges: 0.0.0.0/0
+                                    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                              spec:
+                                type: LoadBalancer
+                            updateStrategy: patch
 
       deleteBackup:
         workflow:
@@ -961,16 +1058,12 @@ services:
                 value: "{{ $sys.snapshot.time }}"
               - name: namespace
                 value: "{{ $sys.namespace }}"
-              - name: instanceId
-                value: "{{ $sys.instanceId }}"
           templates:
             - name: deleteBackup
               inputs:
                 parameters:
                   - name: snapshotId
-                  - name: snapshotTime
                   - name: namespace
-                  - name: instanceId
               dag:
                 tasks:
                   - name: deleteBackupCR
@@ -979,12 +1072,8 @@ services:
                       parameters:
                         - name: snapshotId
                           value: "{{inputs.parameters.snapshotId}}"
-                        - name: snapshotTime
-                          value: "{{inputs.parameters.snapshotTime}}"
                         - name: namespace
                           value: "{{inputs.parameters.namespace}}"
-                        - name: instanceId
-                          value: "{{inputs.parameters.instanceId}}"
             - name: delete-backup
               inputs:
                 parameters:
@@ -1000,9 +1089,6 @@ services:
                   metadata:
                     name: "{{inputs.parameters.snapshotId}}"
                     namespace: "{{inputs.parameters.namespace}}"
-                    annotations:
-                      omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
-                      omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
       failover:
         workflow:
           entrypoint: failover
