@@ -801,14 +801,22 @@ services:
                 value: "{{ $sys.restore.metadata.backupId }}"
               - name: backupName
                 value: "{{ $sys.restore.metadata.backupName }}"
-              - name: sourceBackupObjectName
-                value: "{{ $sys.restore.snapshotId }}"
+              - name: sourceInstanceId
+                value: "{{ $sys.instanceId }}"
               - name: newClusterName
                 value: "{{ $sys.targetInstanceId }}"
               - name: instances
                 value: "{{ $var.numberOfInstances }}"
               - name: storageSize
                 value: "{{ $var.storageSize }}"
+              - name: backupS3BucketName
+                value: "{{ $var.backupS3BucketName }}"
+              - name: backupS3BucketRegionEncoded
+                value: "{{ $func.base64encode($var.backupS3BucketRegion) }}"
+              - name: backupS3AccessKeyIdEncoded
+                value: "{{ $func.base64encode($var.backupS3AccessKeyId) }}"
+              - name: backupS3SecretAccessKeyEncoded
+                value: "{{ $func.base64encode($var.backupS3SecretAccessKey) }}"
           templates:
             - name: restore
               inputs:
@@ -818,14 +826,34 @@ services:
                   - name: restoreSnapshotTime
                   - name: backupId
                   - name: backupName
-                  - name: sourceBackupObjectName
+                  - name: sourceInstanceId
                   - name: newClusterName
                   - name: instances
                   - name: storageSize
+                  - name: backupS3BucketName
+                  - name: backupS3BucketRegionEncoded
+                  - name: backupS3AccessKeyIdEncoded
+                  - name: backupS3SecretAccessKeyEncoded
               dag:
                 tasks:
+                  - name: createRestoreBackupSecret
+                    template: apply-restore-backup-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: newClusterName
+                          value: "{{inputs.parameters.newClusterName}}"
+                        - name: backupS3AccessKeyIdEncoded
+                          value: "{{inputs.parameters.backupS3AccessKeyIdEncoded}}"
+                        - name: backupS3SecretAccessKeyEncoded
+                          value: "{{inputs.parameters.backupS3SecretAccessKeyEncoded}}"
+                        - name: backupS3BucketRegionEncoded
+                          value: "{{inputs.parameters.backupS3BucketRegionEncoded}}"
                   - name: createCluster
                     template: apply-cluster
+                    dependencies:
+                      - createRestoreBackupSecret
                     arguments:
                       parameters:
                         - name: namespace
@@ -838,14 +866,37 @@ services:
                           value: "{{inputs.parameters.backupId}}"
                         - name: backupName
                           value: "{{inputs.parameters.backupName}}"
-                        - name: sourceBackupObjectName
-                          value: "{{inputs.parameters.sourceBackupObjectName}}"
+                        - name: sourceInstanceId
+                          value: "{{inputs.parameters.sourceInstanceId}}"
                         - name: newClusterName
                           value: "{{inputs.parameters.newClusterName}}"
                         - name: instances
                           value: "{{inputs.parameters.instances}}"
                         - name: storageSize
                           value: "{{inputs.parameters.storageSize}}"
+                        - name: backupS3BucketName
+                          value: "{{inputs.parameters.backupS3BucketName}}"
+            - name: apply-restore-backup-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: newClusterName
+                  - name: backupS3AccessKeyIdEncoded
+                  - name: backupS3SecretAccessKeyEncoded
+                  - name: backupS3BucketRegionEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: Opaque
+                  data:
+                    ACCESS_KEY_ID: "{{inputs.parameters.backupS3AccessKeyIdEncoded}}"
+                    ACCESS_SECRET_KEY: "{{inputs.parameters.backupS3SecretAccessKeyEncoded}}"
+                    REGION: "{{inputs.parameters.backupS3BucketRegionEncoded}}"
             - name: apply-cluster
               inputs:
                 parameters:
@@ -854,10 +905,11 @@ services:
                   - name: restoreSnapshotTime
                   - name: backupId
                   - name: backupName
-                  - name: sourceBackupObjectName
+                  - name: sourceInstanceId
                   - name: newClusterName
                   - name: instances
                   - name: storageSize
+                  - name: backupS3BucketName
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.instances}}, status.readyInstances == {{inputs.parameters.instances}}
@@ -878,8 +930,25 @@ services:
                       size: "{{inputs.parameters.storageSize}}"
                     bootstrap:
                       recovery:
-                        backup:
-                          name: "{{inputs.parameters.sourceBackupObjectName}}"
+                        source: clusterBackup
+                        recoveryTarget:
+                          backupID: "{{inputs.parameters.backupId}}"
+                    externalClusters:
+                      - name: clusterBackup
+                        barmanObjectStore:
+                          destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.sourceInstanceId}}"
+                          s3Credentials:
+                            accessKeyId:
+                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              key: ACCESS_KEY_ID
+                            secretAccessKey:
+                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              key: ACCESS_SECRET_KEY
+                            region:
+                              name: "{{inputs.parameters.newClusterName}}-restore-s3-credentials"
+                              key: REGION
+                          wal:
+                            maxParallel: 8
 
       deleteBackup:
         workflow:
