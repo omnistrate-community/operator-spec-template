@@ -802,7 +802,7 @@ services:
               - name: backupName
                 value: "{{ $sys.backup.backupName }}"
               - name: sourceInstanceId
-                value: "{{ $sys.instanceId }}"
+                value: "{{ $sys.sourceInstanceId }}"
               - name: newClusterName
                 value: "{{ $sys.targetInstanceId }}"
               - name: instances
