@@ -5,6 +5,7 @@ ENVIRONMENT=Dev
 CLOUD_PROVIDER=aws
 REGION=ap-south-1
 INSTANCE_ID ?=
+TARGET_VERSION ?=
 INSTANCE_FILTER=service:$(SERVICE_NAME),plan:$(SERVICE_PLAN)
 INSTANCE_ID_JQ='[.[] | .instance_id // .id // empty] | .[]'
 
@@ -69,6 +70,18 @@ list:
 	else \
 		omnistrate-ctl instance list --filter="$(INSTANCE_FILTER)" --output json; \
 	fi
+
+.PHONY: upgrade-instance
+upgrade-instance:
+	@if [ -z "$(INSTANCE_ID)" ]; then \
+		echo "INSTANCE_ID is required. Usage: make upgrade-instance INSTANCE_ID=<instance-id> TARGET_VERSION=<version|latest|preferred>"; \
+		exit 1; \
+	fi
+	@if [ -z "$(TARGET_VERSION)" ]; then \
+		echo "TARGET_VERSION is required. Usage: make upgrade-instance INSTANCE_ID=<instance-id> TARGET_VERSION=<version|latest|preferred>"; \
+		exit 1; \
+	fi
+	@omnistrate-ctl upgrade create "$(INSTANCE_ID)" --version="$(TARGET_VERSION)" --output json
 
 .PHONY: delete-all
 delete-all:

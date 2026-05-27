@@ -39,6 +39,7 @@ Make sure to keep this file secure and never commit it to version control.
   - Region: ap-south-1
   - PostgreSQL password: read from `POSTGRESQL_PASSWORD`
 - `make list`: Lists all instances in JSON format
+- `make upgrade-instance INSTANCE_ID=<instance-id> TARGET_VERSION=<version|latest|preferred>`: Triggers an upgrade for an instance to the target service version
 - `make delete-all`: Deletes all running instances immediately
 - `make delete-all-wait`: Deletes all instances and waits for completion
 - `make destroy`: Deletes all instances and removes the service completely
