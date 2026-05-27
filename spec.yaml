@@ -798,11 +798,11 @@ services:
               - name: restoreSnapshotTime
                 value: "{{ $sys.restore.snapshotTime }}"
               - name: backupId
-                value: "{{ $sys.restore.metadata.backupId }}"
+                value: "{{ $sys.backup.backupId }}"
               - name: backupName
-                value: "{{ $sys.restore.metadata.backupName }}"
+                value: "{{ $sys.backup.backupName }}"
               - name: sourceInstanceId
-                value: "{{ $sys.instanceId }}"
+                value: "{{ $sys.sourceInstanceId }}"
               - name: newClusterName
                 value: "{{ $sys.targetInstanceId }}"
               - name: instances
