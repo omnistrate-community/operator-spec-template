@@ -798,9 +798,9 @@ services:
               - name: restoreSnapshotTime
                 value: "{{ $sys.restore.snapshotTime }}"
               - name: backupId
-                value: "{{ $sys.backup.backupId }}"
+                value: "{{ $sys.restore.metadata.backupId }}"
               - name: backupName
-                value: "{{ $sys.backup.backupName }}"
+                value: "{{ $sys.restore.metadata.backupName }}"
               - name: sourceInstanceId
                 value: "{{ $sys.sourceInstanceId }}"
               - name: newClusterName
