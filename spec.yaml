@@ -1143,8 +1143,6 @@ services:
                   metadata:
                     name: "{{inputs.parameters.primaryPodName}}"
                     namespace: "{{inputs.parameters.namespace}}"
-                    labels:
-                      postgresql: "{{inputs.parameters.instanceId}}"
 
     # Custom operator workflows with inline workflow definitions
     customWorkflows:
@@ -1202,5 +1200,3 @@ services:
                 metadata:
                   name: "{{inputs.parameters.primaryPodName}}"
                   namespace: "{{inputs.parameters.namespace}}"
-                  labels:
-                    postgresql: "{{inputs.parameters.instanceId}}"
