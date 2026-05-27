@@ -127,8 +127,8 @@ services:
 
     capabilities:
       backupConfiguration:
-        backupRetentionInDays: 7
-        backupPeriodInHours: 24
+        backupRetentionInDays: 1
+        backupPeriodInHours: 1
         snapshotBeforeDeletion: false
 
     systemWorkflows:
@@ -1060,12 +1060,16 @@ services:
                 value: "{{ $sys.snapshot.time }}"
               - name: namespace
                 value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
           templates:
             - name: deleteBackup
               inputs:
                 parameters:
                   - name: snapshotId
+                  - name: snapshotTime
                   - name: namespace
+                  - name: instanceId
               dag:
                 tasks:
                   - name: deleteBackupCR
@@ -1074,8 +1078,12 @@ services:
                       parameters:
                         - name: snapshotId
                           value: "{{inputs.parameters.snapshotId}}"
+                        - name: snapshotTime
+                          value: "{{inputs.parameters.snapshotTime}}"
                         - name: namespace
                           value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
             - name: delete-backup
               inputs:
                 parameters:
