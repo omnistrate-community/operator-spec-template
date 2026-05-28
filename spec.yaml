@@ -616,6 +616,195 @@ services:
                                 type: LoadBalancer
                             updateStrategy: patch
 
+      start:
+        workflow:
+          entrypoint: scale
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: numberOfInstances
+                value: "{{ $var.replicaCount }}"
+          templates:
+            - name: scale
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              dag:
+                tasks:
+                  - name: patchclusterinstances
+                    template: patch-cluster-instances
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: numberOfInstances
+                          value: "{{inputs.parameters.numberOfInstances}}"
+            - name: patch-cluster-instances
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              resource:
+                action: patch
+                mergeStrategy: merge
+                successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    instances: {{inputs.parameters.numberOfInstances}}
+
+      stop:
+        workflow:
+          entrypoint: scale
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: scale
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              dag:
+                tasks:
+                  - name: patchclusterinstances
+                    template: patch-cluster-instances
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+            - name: patch-cluster-instances
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              resource:
+                action: patch
+                successCondition: status.instances == 0, status.readyInstances == 0
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    instances: 0
+
+      addCapacity:
+        workflow:
+          entrypoint: scale
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: numberOfInstances
+                value: "{{ $var.replicaCount }}"
+          templates:
+            - name: scale
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              dag:
+                tasks:
+                  - name: patchclusterinstances
+                    template: patch-cluster-instances
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: numberOfInstances
+                          value: "{{inputs.parameters.numberOfInstances}}"
+            - name: patch-cluster-instances
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              resource:
+                action: patch
+                successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    instances: {{inputs.parameters.numberOfInstances}}
+
+      removeCapacity:
+        workflow:
+          entrypoint: scale
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: numberOfInstances
+                value: "{{ $var.replicaCount }}"
+          templates:
+            - name: scale
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              dag:
+                tasks:
+                  - name: patchclusterinstances
+                    template: patch-cluster-instances
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: numberOfInstances
+                          value: "{{inputs.parameters.numberOfInstances}}"
+            - name: patch-cluster-instances
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: numberOfInstances
+              resource:
+                action: patch
+                successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    instances: {{inputs.parameters.numberOfInstances}}
+
       delete:
         workflow:
           entrypoint: delete
@@ -1109,7 +1298,9 @@ services:
               - name: instanceId
                 value: "{{ $sys.instanceId }}"
               - name: primaryPodName
-                value: "{{ $var.primaryPodName }}"
+                value: "{{ $var.failedReplicaId }}"
+              - name: action
+                value: "{{ $var.failedReplicaAction }}"
           templates:
             - name: failover
               inputs:
