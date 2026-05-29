@@ -631,15 +631,12 @@ services:
                 value: "{{ $sys.namespace }}"
               - name: instanceId
                 value: "{{ $sys.instanceId }}"
-              - name: numberOfInstances
-                value: "{{ $var.replicaCount }}"
           templates:
             - name: scale
               inputs:
                 parameters:
                   - name: namespace
                   - name: instanceId
-                  - name: numberOfInstances
               dag:
                 tasks:
                   - name: rehydratecluster
@@ -650,8 +647,6 @@ services:
                           value: "{{inputs.parameters.namespace}}"
                         - name: instanceId
                           value: "{{inputs.parameters.instanceId}}"
-                        - name: numberOfInstances
-                          value: "{{inputs.parameters.numberOfInstances}}"
             - name: rehydrate-cluster
               inputs:
                 parameters:
@@ -660,8 +655,6 @@ services:
                   - name: numberOfInstances
               resource:
                 action: patch
-                successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
-                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -670,8 +663,6 @@ services:
                     namespace: "{{inputs.parameters.namespace}}"
                     annotations:
                       cnpg.io/hibernation: "off"
-                  spec:
-                    instances: {{inputs.parameters.numberOfInstances}}
 
       stop:
         workflow:
