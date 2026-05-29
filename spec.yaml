@@ -660,7 +660,6 @@ services:
                   - name: numberOfInstances
               resource:
                 action: patch
-                mergeStrategy: merge
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
                 failureCondition: status.phase == failed
                 manifest: |
