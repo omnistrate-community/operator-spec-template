@@ -706,7 +706,6 @@ services:
                   - name: instanceId
               resource:
                 action: patch
-                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
