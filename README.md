@@ -54,9 +54,9 @@ The service spec demonstrates CloudNativePG lifecycle workflows:
 - `systemWorkflows.start` and `systemWorkflows.stop` toggle CNPG declarative hibernation. `systemWorkflows.addCapacity` and `systemWorkflows.removeCapacity` patch the CNPG `Cluster` instance count and wait until CNPG reports the requested number of total and ready instances.
 - `systemWorkflows.delete` deletes the CNPG `Cluster` resource and then deletes the `basic-auth` secret, Barman Cloud `ObjectStore`, and S3 backup credentials secret.
 - CREATE and MODIFY readiness is expressed on the workflow resource tasks with `successCondition`, for example `status.conditions.#(type=="Ready").status == True`.
-- `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled.
+- `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled. It rehydrates the CNPG cluster and waits for ready instances before creating the `Backup` resource because CNPG cannot back up a hibernated cluster.
 - `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`.
 - `systemWorkflows.deleteBackup` is used by explicit snapshot deletion and retention cleanup. It receives the same `$sys.snapshot.*` values as backup.
 - `customWorkflows.failover` is a provider-defined action. It does not receive restore context; it uses `$sys.namespace`, `$sys.instanceId`, and the user-supplied `primaryPodName`.
 
-The CNPG backup workflow creates a `Backup` resource using the Barman Cloud plugin for S3-backed backups. The create workflow also creates an S3 credentials secret and a Barman Cloud `ObjectStore` for the configured backup bucket and region, with base-backup settings only and no WAL archiving configuration.
+The CNPG backup workflow rehydrates the cluster and then creates a `Backup` resource using the Barman Cloud plugin for S3-backed backups. The create workflow also creates an S3 credentials secret and a Barman Cloud `ObjectStore` for the configured backup bucket and region, with base-backup settings only and no WAL archiving configuration.
