@@ -652,7 +652,6 @@ services:
                 parameters:
                   - name: namespace
                   - name: instanceId
-                  - name: numberOfInstances
               resource:
                 action: patch
                 manifest: |
