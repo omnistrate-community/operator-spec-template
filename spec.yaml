@@ -349,6 +349,7 @@ services:
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -528,6 +529,7 @@ services:
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -656,6 +658,7 @@ services:
                 action: patch
                 mergeStrategy: merge
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -699,7 +702,8 @@ services:
                   - name: instanceId
               resource:
                 action: patch
-                successCondition: status.instances == 0, status.readyInstances == 0
+                successCondition: status.phase == completed
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -748,6 +752,7 @@ services:
               resource:
                 action: patch
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -796,6 +801,7 @@ services:
               resource:
                 action: patch
                 successCondition: status.instances == {{inputs.parameters.numberOfInstances}}, status.readyInstances == {{inputs.parameters.numberOfInstances}}
+                failureCondition: status.phase == failed
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
