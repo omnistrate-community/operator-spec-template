@@ -51,7 +51,7 @@ The service spec demonstrates CloudNativePG lifecycle workflows:
 - `operatorCRDConfiguration` keeps `outputParameters` and the CNPG Helm chart dependency. The deprecated `template`, `supplementalFiles`, and `readinessConditions` fields are intentionally omitted when lifecycle is managed by system workflows.
 - `systemWorkflows.create` creates the `basic-auth` secret, the S3 backup credentials secret, the Barman Cloud `ObjectStore`, applies the CNPG `Cluster` resource through an Argo DAG, and waits for the CNPG Ready condition.
 - `systemWorkflows.modify` reapplies the CNPG `Cluster` resource through an Argo DAG and waits for the CNPG Ready condition.
-- `systemWorkflows.start`, `systemWorkflows.stop`, `systemWorkflows.addCapacity`, and `systemWorkflows.removeCapacity` patch the CNPG `Cluster` instance count and wait until CNPG reports the requested number of total and ready instances.
+- `systemWorkflows.start` and `systemWorkflows.stop` toggle CNPG declarative hibernation. `systemWorkflows.addCapacity` and `systemWorkflows.removeCapacity` patch the CNPG `Cluster` instance count and wait until CNPG reports the requested number of total and ready instances.
 - `systemWorkflows.delete` deletes the CNPG `Cluster` resource and then deletes the `basic-auth` secret, Barman Cloud `ObjectStore`, and S3 backup credentials secret.
 - CREATE and MODIFY readiness is expressed on the workflow resource tasks with `successCondition`, for example `status.conditions.#(type=="Ready").status == True`.
 - `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled.

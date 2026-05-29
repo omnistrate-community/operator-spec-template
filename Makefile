@@ -83,6 +83,22 @@ upgrade-instance:
 	fi
 	@omnistrate-ctl upgrade create "$(INSTANCE_ID)" --version="$(TARGET_VERSION)" --output json
 
+.PHONY: stop-instance
+stop-instance:
+	@if [ -z "$(INSTANCE_ID)" ]; then \
+		echo "INSTANCE_ID is required. Usage: make stop-instance INSTANCE_ID=<instance-id>"; \
+		exit 1; \
+	fi
+	@omnistrate-ctl instance stop "$(INSTANCE_ID)" --output json
+
+.PHONY: stop-start
+start-instance:
+	@if [ -z "$(INSTANCE_ID)" ]; then \
+		echo "INSTANCE_ID is required. Usage: make start-instance INSTANCE_ID=<instance-id>"; \
+		exit 1; \
+	fi
+	@omnistrate-ctl instance start "$(INSTANCE_ID)" --output json
+
 .PHONY: delete-all
 delete-all:
 	@echo "Deleting all instances..."

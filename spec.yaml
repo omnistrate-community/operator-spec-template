@@ -129,7 +129,7 @@ services:
       backupConfiguration:
         backupRetentionInDays: 1
         backupPeriodInHours: 1
-        snapshotBeforeDeletion: false
+        snapshotBeforeDeletion: true
 
     systemWorkflows:
 
@@ -636,8 +636,8 @@ services:
                   - name: numberOfInstances
               dag:
                 tasks:
-                  - name: patchclusterinstances
-                    template: patch-cluster-instances
+                  - name: rehydratecluster
+                    template: rehydrate-cluster
                     arguments:
                       parameters:
                         - name: namespace
@@ -646,7 +646,7 @@ services:
                           value: "{{inputs.parameters.instanceId}}"
                         - name: numberOfInstances
                           value: "{{inputs.parameters.numberOfInstances}}"
-            - name: patch-cluster-instances
+            - name: rehydrate-cluster
               inputs:
                 parameters:
                   - name: namespace
@@ -662,6 +662,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
                   spec:
                     instances: {{inputs.parameters.numberOfInstances}}
 
@@ -680,23 +682,21 @@ services:
                 parameters:
                   - name: namespace
                   - name: instanceId
-                  - name: numberOfInstances
               dag:
                 tasks:
-                  - name: patchclusterinstances
-                    template: patch-cluster-instances
+                  - name: hibernatecluster
+                    template: hibernate-cluster
                     arguments:
                       parameters:
                         - name: namespace
                           value: "{{inputs.parameters.namespace}}"
                         - name: instanceId
                           value: "{{inputs.parameters.instanceId}}"
-            - name: patch-cluster-instances
+            - name: hibernate-cluster
               inputs:
                 parameters:
                   - name: namespace
                   - name: instanceId
-                  - name: numberOfInstances
               resource:
                 action: patch
                 successCondition: status.instances == 0, status.readyInstances == 0
@@ -706,8 +706,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
-                  spec:
-                    instances: 0
+                    annotations:
+                      cnpg.io/hibernation: "on"
 
       addCapacity:
         workflow:
