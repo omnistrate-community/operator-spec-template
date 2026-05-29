@@ -356,6 +356,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
                   spec:
                     enablePDB: true
                     plugins:
@@ -536,6 +538,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
                   spec:
                     enablePDB: true
                     plugins:
@@ -759,6 +763,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
                   spec:
                     instances: {{inputs.parameters.numberOfInstances}}
 
@@ -808,6 +814,8 @@ services:
                   metadata:
                     name: "{{inputs.parameters.instanceId}}"
                     namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
                   spec:
                     instances: {{inputs.parameters.numberOfInstances}}
 
@@ -1149,6 +1157,7 @@ services:
                       omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
                       omnistrate.io/backup-id: "{{inputs.parameters.backupId}}"
                       omnistrate.io/backup-name: "{{inputs.parameters.backupName}}"
+                      cnpg.io/hibernation: "off"
                   spec:
                     enablePDB: true
                     instances: {{inputs.parameters.instances}}
