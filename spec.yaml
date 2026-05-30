@@ -1040,16 +1040,10 @@ services:
                 value: "{{ $func.base64encode($var.backupS3AccessKeyId) }}"
               - name: backupS3SecretAccessKeyEncoded
                 value: "{{ $func.base64encode($var.backupS3SecretAccessKey) }}"
-              - name: externalClusterEndpoint
-                value: "{{ $sys.network.externalClusterEndpoint }}"
               - name: region
-                value: "{{ $sys.deploymentCell.region }}"
+                value: "{{ $var.backupS3BucketRegion }}"
               - name: instanceType
-                value: "{{ $sys.compute.node.instanceType }}"
-              - name: resourceId
-                value: "{{ $sys.deployment.resourceID }}"
-              - name: publicSubnetIds
-                value: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
+                value: "{{ $var.instanceType }}"
           templates:
             - name: restore
               inputs:
@@ -1067,11 +1061,8 @@ services:
                   - name: backupS3BucketRegionEncoded
                   - name: backupS3AccessKeyIdEncoded
                   - name: backupS3SecretAccessKeyEncoded
-                  - name: externalClusterEndpoint
                   - name: region
                   - name: instanceType
-                  - name: resourceId
-                  - name: publicSubnetIds
               dag:
                 tasks:
                   - name: createRestoreBackupSecret
@@ -1114,16 +1105,10 @@ services:
                           value: "{{inputs.parameters.storageSize}}"
                         - name: backupS3BucketName
                           value: "{{inputs.parameters.backupS3BucketName}}"
-                        - name: externalClusterEndpoint
-                          value: "{{inputs.parameters.externalClusterEndpoint}}"
                         - name: region
                           value: "{{inputs.parameters.region}}"
                         - name: instanceType
                           value: "{{inputs.parameters.instanceType}}"
-                        - name: resourceId
-                          value: "{{inputs.parameters.resourceId}}"
-                        - name: publicSubnetIds
-                          value: "{{inputs.parameters.publicSubnetIds}}"
             - name: apply-restore-backup-secret
               inputs:
                 parameters:
@@ -1158,11 +1143,8 @@ services:
                   - name: instances
                   - name: storageSize
                   - name: backupS3BucketName
-                  - name: externalClusterEndpoint
                   - name: region
                   - name: instanceType
-                  - name: resourceId
-                  - name: publicSubnetIds
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.instances}}, status.readyInstances == {{inputs.parameters.instances}}
@@ -1225,10 +1207,6 @@ services:
                                 operator: In
                                 values:
                                 - "{{inputs.parameters.instanceType}}"
-                              - key: omnistrate.com/resource
-                                operator: In
-                                values:
-                                - "{{inputs.parameters.resourceId}}"
                     managed:
                       services:
                         additional:
@@ -1237,13 +1215,11 @@ services:
                               metadata:
                                 name: "{{inputs.parameters.newClusterName}}-cluster-ro"
                                 annotations:
-                                    external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
                                     external-dns.alpha.kubernetes.io/ttl: "60"
-                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
                                     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
                                     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
                                     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
                                     service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
                                     service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
                                     service.beta.kubernetes.io/aws-load-balancer-type: external
@@ -1257,13 +1233,11 @@ services:
                               metadata:
                                 name: "{{inputs.parameters.newClusterName}}-cluster-rw"
                                 annotations:
-                                    external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
                                     external-dns.alpha.kubernetes.io/ttl: "60"
-                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
+                                    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/instance={{inputs.parameters.newClusterName}},omnistrate.com/managed-by=omnistrate"
                                     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
                                     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
                                     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
-                                    service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.publicSubnetIds}}"
                                     service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
                                     service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
                                     service.beta.kubernetes.io/aws-load-balancer-type: external

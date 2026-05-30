@@ -55,7 +55,7 @@ The service spec demonstrates CloudNativePG lifecycle workflows:
 - `systemWorkflows.delete` deletes the CNPG `Cluster` resource and then deletes the `basic-auth` secret, Barman Cloud `ObjectStore`, and S3 backup credentials secret.
 - CREATE and MODIFY readiness is expressed on the workflow resource tasks with `successCondition`, for example `status.conditions.#(type=="Ready").status == True`.
 - `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled. It rehydrates the CNPG cluster and waits for ready instances before creating the `Backup` resource because CNPG cannot back up a hibernated cluster.
-- `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`.
+- `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`. The restore workflow only references restore-time system parameters plus service input parameters because it runs before the normal create reconciliation has full deployment, network, and compute system parameters available.
 - `systemWorkflows.deleteBackup` is used by explicit snapshot deletion and retention cleanup. It receives the same `$sys.snapshot.*` values as backup.
 - `customWorkflows.failover` is a provider-defined action. It does not receive restore context; it uses `$sys.namespace`, `$sys.instanceId`, and the user-supplied `primaryPodName`.
 
