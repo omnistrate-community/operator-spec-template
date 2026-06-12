@@ -1065,8 +1065,16 @@ services:
                   - name: instanceType
               dag:
                 tasks:
+                  - name: createNamespace
+                    template: apply-namespace
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
                   - name: createRestoreBackupSecret
                     template: apply-restore-backup-secret
+                    dependencies:
+                      - createNamespace
                     arguments:
                       parameters:
                         - name: namespace
@@ -1109,6 +1117,17 @@ services:
                           value: "{{inputs.parameters.region}}"
                         - name: instanceType
                           value: "{{inputs.parameters.instanceType}}"
+            - name: apply-namespace
+              inputs:
+                parameters:
+                  - name: namespace
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Namespace
+                  metadata:
+                    name: "{{inputs.parameters.namespace}}"
             - name: apply-restore-backup-secret
               inputs:
                 parameters:
@@ -1147,7 +1166,8 @@ services:
                   - name: instanceType
               resource:
                 action: apply
-                successCondition: status.instances == {{inputs.parameters.instances}}, status.readyInstances == {{inputs.parameters.instances}}
+                successCondition: status.instances == {{inputs.parameters.instances}},
+                  status.readyInstances == {{inputs.parameters.instances}}
                 manifest: |
                   apiVersion: postgresql.cnpg.io/v1
                   kind: Cluster
@@ -1167,8 +1187,6 @@ services:
                       resizeInUseVolumes: true
                       size: "{{inputs.parameters.storageSize}}"
                       storageClass: gp3
-                    # Recovery restores database, role, and password state from the selected backup.
-                    # Do not combine CNPG recovery with the create-time initdb/basic-auth bootstrap.
                     bootstrap:
                       recovery:
                         source: clusterBackup
@@ -1177,6 +1195,7 @@ services:
                     externalClusters:
                       - name: clusterBackup
                         barmanObjectStore:
+                          serverName: "{{inputs.parameters.sourceInstanceId}}"
                           destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.sourceInstanceId}}"
                           s3Credentials:
                             accessKeyId:
@@ -1297,106 +1316,3 @@ services:
                   metadata:
                     name: "{{inputs.parameters.snapshotId}}"
                     namespace: "{{inputs.parameters.namespace}}"
-      failover:
-        workflow:
-          entrypoint: failover
-          arguments:
-            parameters:
-              - name: namespace
-                value: "{{ $sys.namespace }}"
-              - name: instanceId
-                value: "{{ $sys.instanceId }}"
-              - name: primaryPodName
-                value: "{{ $var.failedReplicaId }}"
-              - name: action
-                value: "{{ $var.failedReplicaAction }}"
-          templates:
-            - name: failover
-              inputs:
-                parameters:
-                  - name: namespace
-                  - name: instanceId
-                  - name: primaryPodName
-              dag:
-                tasks:
-                  - name: deletePrimaryPod
-                    template: delete-primary-pod
-                    arguments:
-                      parameters:
-                        - name: namespace
-                          value: "{{inputs.parameters.namespace}}"
-                        - name: instanceId
-                          value: "{{inputs.parameters.instanceId}}"
-                        - name: primaryPodName
-                          value: "{{inputs.parameters.primaryPodName}}"
-            - name: delete-primary-pod
-              inputs:
-                parameters:
-                  - name: namespace
-                  - name: instanceId
-                  - name: primaryPodName
-              resource:
-                action: delete
-                manifest: |
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: "{{inputs.parameters.primaryPodName}}"
-                    namespace: "{{inputs.parameters.namespace}}"
-
-    # Custom operator workflows with inline workflow definitions
-    customWorkflows:
-    - verb: switchPrimary
-      displayName: Force switch primary
-      description: Delete the current primary pod and let CloudNativePG promote the most suitable replica.
-      scope:
-        - fleet
-      apiParameters:
-        - key: primaryPodName
-          displayName: Primary Pod Name
-          description: Name of the current CloudNativePG primary pod to delete.
-          type: String
-          required: true
-      workflow:
-        entrypoint: failover
-        arguments:
-          parameters:
-            - name: namespace
-              value: "{{ $sys.namespace }}"
-            - name: instanceId
-              value: "{{ $sys.instanceId }}"
-            - name: primaryPodName
-              value: "{{ $var.primaryPodName }}"
-        templates:
-          - name: failover
-            inputs:
-              parameters:
-                - name: namespace
-                - name: instanceId
-                - name: primaryPodName
-            dag:
-              tasks:
-                - name: deletePrimaryPod
-                  template: delete-primary-pod
-                  arguments:
-                    parameters:
-                      - name: namespace
-                        value: "{{inputs.parameters.namespace}}"
-                      - name: instanceId
-                        value: "{{inputs.parameters.instanceId}}"
-                      - name: primaryPodName
-                        value: "{{inputs.parameters.primaryPodName}}"
-          - name: delete-primary-pod
-            inputs:
-              parameters:
-                - name: namespace
-                - name: instanceId
-                - name: primaryPodName
-            resource:
-              action: delete
-              manifest: |
-                apiVersion: v1
-                kind: Pod
-                metadata:
-                  name: "{{inputs.parameters.primaryPodName}}"
-                  namespace: "{{inputs.parameters.namespace}}"
