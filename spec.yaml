@@ -1323,52 +1323,6 @@ services:
                   metadata:
                     name: "{{inputs.parameters.snapshotId}}"
                     namespace: "{{inputs.parameters.namespace}}"
-      failover:
-        workflow:
-          entrypoint: failover
-          arguments:
-            parameters:
-              - name: namespace
-                value: "{{ $sys.namespace }}"
-              - name: instanceId
-                value: "{{ $sys.instanceId }}"
-              - name: primaryPodName
-                value: "{{ $var.failedReplicaId }}"
-              - name: action
-                value: "{{ $var.failedReplicaAction }}"
-          templates:
-            - name: failover
-              inputs:
-                parameters:
-                  - name: namespace
-                  - name: instanceId
-                  - name: primaryPodName
-              dag:
-                tasks:
-                  - name: deletePrimaryPod
-                    template: delete-primary-pod
-                    arguments:
-                      parameters:
-                        - name: namespace
-                          value: "{{inputs.parameters.namespace}}"
-                        - name: instanceId
-                          value: "{{inputs.parameters.instanceId}}"
-                        - name: primaryPodName
-                          value: "{{inputs.parameters.primaryPodName}}"
-            - name: delete-primary-pod
-              inputs:
-                parameters:
-                  - name: namespace
-                  - name: instanceId
-                  - name: primaryPodName
-              resource:
-                action: delete
-                manifest: |
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: "{{inputs.parameters.primaryPodName}}"
-                    namespace: "{{inputs.parameters.namespace}}"
 
     # Custom operator workflows with inline workflow definitions
     customWorkflows:
