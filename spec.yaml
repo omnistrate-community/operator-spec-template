@@ -948,6 +948,12 @@ services:
                 value: "{{ $sys.deployment.resourceID }}"
               - name: publicSubnetIds
                 value: "{{ $sys.deploymentCell.publicSubnetIDs[*].id }}"
+              - name: postgresqlUsername
+                value: "{{ $var.postgresqlUsername }}"
+              - name: postgresqlUsernameEncoded
+                value: "{{ $func.base64encode($var.postgresqlUsername) }}"
+              - name: postgresqlPasswordEncoded
+                value: "{{ $func.base64encode($var.postgresqlPassword) }}"
           templates:
             - name: restore
               inputs:
@@ -970,8 +976,21 @@ services:
                   - name: instanceType
                   - name: resourceId
                   - name: publicSubnetIds
+                  - name: postgresqlUsername
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
               dag:
                 tasks:
+                  - name: createsecret
+                    template: apply-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: postgresqlUsernameEncoded
+                          value: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                        - name: postgresqlPasswordEncoded
+                          value: "{{inputs.parameters.postgresqlPasswordEncoded}}"
                   - name: createRestoreBackupSecret
                     template: apply-restore-backup-secret
                     arguments:
@@ -989,6 +1008,7 @@ services:
                   - name: createCluster
                     template: apply-cluster
                     dependencies:
+                      - createsecret
                       - createRestoreObjectStore
                       - createBackupObjectStore
                     arguments:
@@ -1023,6 +1043,8 @@ services:
                           value: "{{inputs.parameters.resourceId}}"
                         - name: publicSubnetIds
                           value: "{{inputs.parameters.publicSubnetIds}}"
+                        - name: postgresqlUsername
+                          value: "{{inputs.parameters.postgresqlUsername}}"
                   - name: createRestoreObjectStore
                     template: apply-restore-object-store
                     dependencies:
@@ -1049,6 +1071,24 @@ services:
                           value: "{{inputs.parameters.newClusterName}}"
                         - name: backupS3BucketName
                           value: "{{inputs.parameters.backupS3BucketName}}"
+            - name: apply-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: kubernetes.io/basic-auth
+                  data:
+                    username: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                    password: "{{inputs.parameters.postgresqlPasswordEncoded}}"
             - name: apply-restore-backup-secret
               inputs:
                 parameters:
@@ -1149,6 +1189,7 @@ services:
                   - name: instanceType
                   - name: resourceId
                   - name: publicSubnetIds
+                  - name: postgresqlUsername
               resource:
                 action: apply
                 successCondition: status.instances == {{inputs.parameters.instances}}, status.readyInstances == {{inputs.parameters.instances}}
@@ -1175,8 +1216,6 @@ services:
                       resizeInUseVolumes: true
                       size: "{{inputs.parameters.storageSize}}"
                       storageClass: gp3
-                    # Recovery restores database, role, and password state from the selected backup.
-                    # Do not combine CNPG recovery with the create-time initdb/basic-auth bootstrap.
                     bootstrap:
                       recovery:
                         source: clusterBackup
@@ -1211,6 +1250,12 @@ services:
                                 values:
                                 - "{{inputs.parameters.resourceId}}"
                     managed:
+                      roles:
+                        - name: "{{inputs.parameters.postgresqlUsername}}"
+                          ensure: present
+                          login: true
+                          passwordSecret:
+                            name: basic-auth
                       services:
                         additional:
                           - selectorType: ro
