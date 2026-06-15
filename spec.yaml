@@ -990,6 +990,7 @@ services:
                     template: apply-cluster
                     dependencies:
                       - createRestoreObjectStore
+                      - createBackupObjectStore
                     arguments:
                       parameters:
                         - name: namespace
@@ -1034,6 +1035,18 @@ services:
                           value: "{{inputs.parameters.newClusterName}}"
                         - name: sourceInstanceId
                           value: "{{inputs.parameters.sourceInstanceId}}"
+                        - name: backupS3BucketName
+                          value: "{{inputs.parameters.backupS3BucketName}}"
+                  - name: createBackupObjectStore
+                    template: apply-backup-object-store
+                    dependencies:
+                      - createRestoreBackupSecret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: newClusterName
+                          value: "{{inputs.parameters.newClusterName}}"
                         - name: backupS3BucketName
                           value: "{{inputs.parameters.backupS3BucketName}}"
             - name: apply-restore-backup-secret
@@ -1089,6 +1102,35 @@ services:
                         compression: gzip
                       wal:
                         maxParallel: 8
+            - name: apply-backup-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: newClusterName
+                  - name: backupS3BucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.newClusterName}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.newClusterName}}"
+                      s3Credentials:
+                        accessKeyId:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: ACCESS_KEY_ID
+                        secretAccessKey:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: ACCESS_SECRET_KEY
+                        region:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: REGION
+                      data:
+                        compression: gzip
             - name: apply-cluster
               inputs:
                 parameters:
@@ -1124,6 +1166,10 @@ services:
                       cnpg.io/hibernation: "off"
                   spec:
                     enablePDB: true
+                    plugins:
+                      - name: barman-cloud.cloudnative-pg.io
+                        parameters:
+                          barmanObjectName: "{{inputs.parameters.newClusterName}}-s3"
                     instances: {{inputs.parameters.instances}}
                     storage:
                       resizeInUseVolumes: true
