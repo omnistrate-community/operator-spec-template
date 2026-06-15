@@ -1,62 +1,163 @@
-# Service Spec Based Service Template
+# CloudNativePG Operator Service Plan Template
 
-Example on how to build and deploy a Container Based Service in (Omnistrate)[https://www.omnistrate.com]
+This repository contains an Omnistrate service spec for building a PostgreSQL SaaS product with the CloudNativePG operator. The template keeps the database lifecycle in Kubernetes-native custom resources and uses Omnistrate `systemWorkflows` to expose provisioning, update, start, stop, backup, restore, and cleanup through Omnistrate APIs, Customer Portal, CLI, and Operations Center.
 
-## Install Omnistrate CTL
+The service plan is defined in [`spec.yaml`](spec.yaml). It installs CloudNativePG and the Barman Cloud plugin as Helm dependencies, creates a CNPG `Cluster`, exposes writer and reader endpoints, stores backups in S3, and restores a new target cluster from Omnistrate snapshot metadata.
 
-Follow the instructions for [omnistrate-ctl installation](https://ctl.omnistrate.cloud/install/)
+## Prerequisites
 
-Detailed documentation on the commands available can be found in the [omnistrate-ctl manual](https://ctl.omnistrate.cloud/omnistrate-ctl/)
+- An Omnistrate account.
+- [`omnistrate-ctl`](https://ctl.omnistrate.cloud/install/).
+- `jq`, used by the Makefile to build JSON parameters.
+- AWS credentials for an S3 bucket that CloudNativePG can use for backups.
 
-## Configuration Setup
+## Configuration
 
-Before using the make commands, you need to set up the following configuration files:
+Copy the templates and fill in your values:
 
-1. `.env` file:
+```bash
+cp .env.template .env
+cp .omnistrate.password.template .omnistrate.password
+```
 
-   ```bash
-   OMNISTRATE_EMAIL=your-email@example.com
-   POSTGRESQL_PASSWORD=your-postgres-password
-   ```
+`.env` must include:
 
-2. `.omnistrate.password` file:
+```bash
+OMNISTRATE_EMAIL=your-email@example.com
+POSTGRESQL_PASSWORD=your-postgres-password
+BACKUP_S3_BUCKET_NAME=your-backup-bucket
+BACKUP_S3_BUCKET_REGION=ap-south-1
+BACKUP_S3_ACCESS_KEY_ID=your-access-key-id
+BACKUP_S3_SECRET_ACCESS_KEY=your-secret-access-key
+```
 
-   ```bash
-   your-omnistrate-password
-   ```
+`.omnistrate.password` should contain only your Omnistrate password. Do not commit `.env` or `.omnistrate.password`.
 
-Make sure to keep this file secure and never commit it to version control.
+## Build and Run
 
-## Available Make Commands
+Log in:
 
-- `make install-ctl`: Installs the Omnistrate CLI tool (omnistrate-ctl) via Homebrew
-- `make upgrade-ctl`: Upgrades the Omnistrate CLI tool to the latest version
-- `make login`: Logs in to Omnistrate using credentials from your environment
-- `make release`: Builds and releases the service using the compose.yaml configuration
-- `make create`: Creates a new instance of the service with the following defaults:
-  - Environment: Dev
-  - Cloud Provider: AWS
-  - Region: ap-south-1
-  - PostgreSQL password: read from `POSTGRESQL_PASSWORD`
-- `make list`: Lists all instances in JSON format
-- `make upgrade-instance INSTANCE_ID=<instance-id> TARGET_VERSION=<version|latest|preferred>`: Triggers an upgrade for an instance to the target service version
-- `make delete-all`: Deletes all running instances immediately
-- `make delete-all-wait`: Deletes all instances and waits for completion
-- `make destroy`: Deletes all instances and removes the service completely
+```bash
+make login
+```
 
-## Operator Workflow Example
+Build and release the service plan:
 
-The service spec demonstrates CloudNativePG lifecycle workflows:
+```bash
+make release
+```
 
-- `operatorCRDConfiguration` keeps `outputParameters` and the CNPG Helm chart dependency. The deprecated `template`, `supplementalFiles`, and `readinessConditions` fields are intentionally omitted when lifecycle is managed by system workflows.
-- `systemWorkflows.create` creates the `basic-auth` secret, the S3 backup credentials secret, the Barman Cloud `ObjectStore`, applies the CNPG `Cluster` resource through an Argo DAG, and waits for the CNPG Ready condition.
-- `systemWorkflows.modify` reapplies the CNPG `Cluster` resource through an Argo DAG and waits for the CNPG Ready condition.
-- `systemWorkflows.start` and `systemWorkflows.stop` toggle CNPG declarative hibernation. `systemWorkflows.addCapacity` and `systemWorkflows.removeCapacity` patch the CNPG `Cluster` instance count and wait until CNPG reports the requested number of total and ready instances.
-- `systemWorkflows.delete` deletes the CNPG `Cluster` resource and then deletes the `basic-auth` secret, Barman Cloud `ObjectStore`, and S3 backup credentials secret.
-- CREATE and MODIFY readiness is expressed on the workflow resource tasks with `successCondition`, for example `status.conditions.#(type=="Ready").status == True`.
-- `systemWorkflows.backup` is used by manual backups, periodic backups from `backupPeriodInHours`, and backup-before-delete when `snapshotBeforeDeletion` is enabled. It rehydrates the CNPG cluster and waits for ready instances before creating the `Backup` resource because CNPG cannot back up a hibernated cluster.
-- `systemWorkflows.restore` uses the Omnistrate restore API context. The restored CNPG cluster name comes from `$sys.targetInstanceId`; snapshot identity comes from `$sys.restore.snapshotId` and `$sys.restore.snapshotTime`.
-- `systemWorkflows.deleteBackup` is used by explicit snapshot deletion and retention cleanup. It receives the same `$sys.snapshot.*` values as backup.
-- `customWorkflows.failover` is a provider-defined action. It does not receive restore context; it uses `$sys.namespace`, `$sys.instanceId`, and the user-supplied `primaryPodName`.
+Create an instance in the default AWS region configured by the Makefile:
 
-The CNPG backup workflow rehydrates the cluster and then creates a `Backup` resource using the Barman Cloud plugin for S3-backed backups. The create workflow also creates an S3 credentials secret and a Barman Cloud `ObjectStore` for the configured backup bucket and region, with base-backup settings only and no WAL archiving configuration.
+```bash
+make create
+```
+
+List or describe instances:
+
+```bash
+make list
+make list INSTANCE_ID=<instance-id>
+```
+
+Start and stop an instance:
+
+```bash
+make stop-instance INSTANCE_ID=<instance-id>
+make start-instance INSTANCE_ID=<instance-id>
+```
+
+Upgrade an instance:
+
+```bash
+make upgrade-instance INSTANCE_ID=<instance-id> TARGET_VERSION=<version|latest|preferred>
+```
+
+Delete all matching instances and remove the service:
+
+```bash
+make destroy
+```
+
+## Template Structure
+
+The current template uses:
+
+- `apiParameters` for instance type, PostgreSQL credentials, database name, replica count, storage size, and S3 backup settings.
+- `endpointConfiguration` for public writer and reader PostgreSQL endpoints.
+- `operatorCRDConfiguration.helmChartDependencies` to install CloudNativePG and the Barman Cloud plugin.
+- `capabilities.backupConfiguration` to enable periodic backups, retention cleanup, and backup-before-delete.
+- `systemWorkflows` for the managed resource lifecycle.
+
+The deprecated `operatorCRDConfiguration.template`, `operatorCRDConfiguration.supplementalFiles`, and `operatorCRDConfiguration.readinessConditions` fields are intentionally omitted. Resource manifests, readiness checks, and output parameters are modeled in `systemWorkflows` instead.
+
+## System Workflows
+
+The template defines these workflows:
+
+| Workflow | Purpose |
+| --- | --- |
+| `create` | Creates the PostgreSQL credentials secret, S3 credentials secret, Barman Cloud `ObjectStore`, and CNPG `Cluster`. |
+| `modify` | Reapplies the CNPG `Cluster` with updated inputs such as replica count, storage size, endpoints, and placement metadata. |
+| `start` | Patches CNPG hibernation to `off`. |
+| `stop` | Patches CNPG hibernation to `on`. |
+| `delete` | Deletes the CNPG `Cluster`, PostgreSQL credentials secret, Barman Cloud `ObjectStore`, and S3 credentials secret. |
+| `backup` | Rehydrates the cluster if needed, creates a CNPG `Backup`, and returns backup metadata to Omnistrate. |
+| `restore` | Creates a new target CNPG `Cluster` from the selected Omnistrate snapshot and captured backup metadata. |
+| `deleteBackup` | Deletes the CNPG `Backup` resource during explicit snapshot deletion or retention cleanup. |
+
+At minimum, operator-backed service plans should define `create`, `modify`, and `delete` so Omnistrate can provision, update, and remove the managed resource through standard lifecycle APIs. This template also includes start/stop and snapshot workflows for a complete database lifecycle.
+
+## Backup and Restore
+
+Backups are configured as a resource capability:
+
+```yaml
+capabilities:
+  backupConfiguration:
+    backupRetentionInDays: 1
+    backupPeriodInHours: 1
+    snapshotBeforeDeletion: true
+```
+
+`systemWorkflows.backup` receives:
+
+- `$sys.snapshot.id`
+- `$sys.snapshot.time`
+- `$sys.namespace`
+- `$sys.instanceId`
+- `$var.numberOfInstances`
+
+It patches hibernation to `off`, waits for the configured number of ready instances, creates a CNPG `Backup`, and returns `backupId` and `backupName` from the CNPG backup status.
+
+`systemWorkflows.restore` receives the same create-time context needed to render the target CNPG `Cluster`, plus restore-specific context:
+
+- `$sys.restore.snapshotId`
+- `$sys.restore.snapshotTime`
+- `$sys.restore.metadata.backupId`
+- `$sys.restore.metadata.backupName`
+- `$sys.sourceInstanceId`
+- `$sys.targetInstanceId`
+
+The restored cluster uses `$sys.targetInstanceId` as the new CNPG cluster name. It restores from the selected backup under the source instance S3 prefix and annotates the target cluster with the Omnistrate snapshot and backup metadata.
+
+`systemWorkflows.deleteBackup` receives `$sys.snapshot.id` and `$sys.snapshot.time` and removes the matching CNPG `Backup` resource. Automated backups are expired by the backup retention policy; manual snapshots are user-controlled.
+
+## Workflow Syntax
+
+Workflow definitions use Argo Workflow-style structure:
+
+- `entrypoint`
+- `arguments.parameters`
+- `templates`
+- DAG `tasks`
+- Kubernetes `resource` templates
+- `successCondition` and `failureCondition`
+
+Omnistrate renders `$sys.*`, `$var.*`, and `$func.*` expressions before executing the workflow.
+
+## Notes
+
+- The template does not define provider `customWorkflows`; it only uses standard Omnistrate `systemWorkflows`.
+- Replica count changes are handled through the modifiable `numberOfInstances` API parameter and the `modify` workflow.
+- The create and modify workflows expose output parameters from the CNPG `Cluster` status, including container image, phase, and topology.
