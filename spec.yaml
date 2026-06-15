@@ -989,7 +989,7 @@ services:
                   - name: createCluster
                     template: apply-cluster
                     dependencies:
-                      - createRestoreBackupSecret
+                      - createRestoreObjectStore
                     arguments:
                       parameters:
                         - name: namespace
@@ -1022,6 +1022,20 @@ services:
                           value: "{{inputs.parameters.resourceId}}"
                         - name: publicSubnetIds
                           value: "{{inputs.parameters.publicSubnetIds}}"
+                  - name: createRestoreObjectStore
+                    template: apply-restore-object-store
+                    dependencies:
+                      - createRestoreBackupSecret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: newClusterName
+                          value: "{{inputs.parameters.newClusterName}}"
+                        - name: sourceInstanceId
+                          value: "{{inputs.parameters.sourceInstanceId}}"
+                        - name: backupS3BucketName
+                          value: "{{inputs.parameters.backupS3BucketName}}"
             - name: apply-restore-backup-secret
               inputs:
                 parameters:
@@ -1043,6 +1057,38 @@ services:
                     ACCESS_KEY_ID: "{{inputs.parameters.backupS3AccessKeyIdEncoded}}"
                     ACCESS_SECRET_KEY: "{{inputs.parameters.backupS3SecretAccessKeyEncoded}}"
                     REGION: "{{inputs.parameters.backupS3BucketRegionEncoded}}"
+            - name: apply-restore-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: newClusterName
+                  - name: sourceInstanceId
+                  - name: backupS3BucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.newClusterName}}-restore-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.sourceInstanceId}}"
+                      s3Credentials:
+                        accessKeyId:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: ACCESS_KEY_ID
+                        secretAccessKey:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: ACCESS_SECRET_KEY
+                        region:
+                          name: "{{inputs.parameters.newClusterName}}-s3-credentials"
+                          key: REGION
+                      data:
+                        compression: gzip
+                      wal:
+                        maxParallel: 8
             - name: apply-cluster
               inputs:
                 parameters:
@@ -1092,20 +1138,11 @@ services:
                           backupID: "{{inputs.parameters.backupId}}"
                     externalClusters:
                       - name: clusterBackup
-                        barmanObjectStore:
-                          destinationPath: "s3://{{inputs.parameters.backupS3BucketName}}/{{inputs.parameters.sourceInstanceId}}"
-                          s3Credentials:
-                            accessKeyId:
-                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
-                              key: ACCESS_KEY_ID
-                            secretAccessKey:
-                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
-                              key: ACCESS_SECRET_KEY
-                            region:
-                              name: "{{inputs.parameters.newClusterName}}-s3-credentials"
-                              key: REGION
-                          wal:
-                            maxParallel: 8
+                        plugin:
+                          name: barman-cloud.cloudnative-pg.io
+                          parameters:
+                            barmanObjectName: "{{inputs.parameters.newClusterName}}-restore-s3"
+                            serverName: "{{inputs.parameters.sourceInstanceId}}"
                     affinity:
                       nodeAffinity:
                         requiredDuringSchedulingIgnoredDuringExecution:
