@@ -926,6 +926,8 @@ services:
                 value: "{{ $sys.sourceInstanceId }}"
               - name: newClusterName
                 value: "{{ $sys.targetInstanceId }}"
+              - name: restoreServerName
+                value: "{{ $sys.targetInstanceId }}-restore-{{ $func.random(string, 8) }}"
               - name: instances
                 value: "{{ $var.numberOfInstances }}"
               - name: storageSize
@@ -965,6 +967,7 @@ services:
                   - name: backupName
                   - name: sourceInstanceId
                   - name: newClusterName
+                  - name: restoreServerName
                   - name: instances
                   - name: storageSize
                   - name: backupS3BucketName
@@ -1027,6 +1030,8 @@ services:
                           value: "{{inputs.parameters.sourceInstanceId}}"
                         - name: newClusterName
                           value: "{{inputs.parameters.newClusterName}}"
+                        - name: restoreServerName
+                          value: "{{inputs.parameters.restoreServerName}}"
                         - name: instances
                           value: "{{inputs.parameters.instances}}"
                         - name: storageSize
@@ -1181,6 +1186,7 @@ services:
                   - name: backupName
                   - name: sourceInstanceId
                   - name: newClusterName
+                  - name: restoreServerName
                   - name: instances
                   - name: storageSize
                   - name: backupS3BucketName
@@ -1211,6 +1217,7 @@ services:
                       - name: barman-cloud.cloudnative-pg.io
                         parameters:
                           barmanObjectName: "{{inputs.parameters.newClusterName}}-s3"
+                          serverName: "{{inputs.parameters.restoreServerName}}"
                     instances: {{inputs.parameters.instances}}
                     storage:
                       resizeInUseVolumes: true
