@@ -4,6 +4,18 @@ This repository contains an Omnistrate service spec for building a PostgreSQL Sa
 
 The service plan is defined in [`spec.yaml`](spec.yaml). It installs CloudNativePG and the Barman Cloud plugin as Helm dependencies, creates a CNPG `Cluster`, exposes writer and reader endpoints, stores backups in S3, and restores a new target cluster from Omnistrate snapshot metadata.
 
+## Deployment models
+
+The `deployment-models` folder holds variants of this plan for other deployment models. The Omnistrate AI architect produced each one from `spec.yaml`, then validated it and built and released it in a Dev environment. Each folder has the spec and screenshots of what Omnistrate generated from it: the architecture with its account boundaries, the security posture, the data flow, the resource graph, the customer operations with their API parameters, and the build.
+
+| Model | Folder | Where the data plane runs |
+|---|---|---|
+| BYOC | [`deployment-models/byoc`](deployment-models/byoc) | Each instance runs in the customer's own AWS account, and the dataplane agent connects outbound to the generated control plane in the provider's account. |
+| Multi-tenant hosted | [`deployment-models/multi-tenant-hosted`](deployment-models/multi-tenant-hosted) | Tenants share a deployment cell in the provider's account, and each tenant gets its own namespace with a NetworkPolicy, a ResourceQuota and a LimitRange. |
+| Dedicated hosted | [`deployment-models/dedicated-hosted`](deployment-models/dedicated-hosted) | Tenants share a deployment cell in the provider's account, and node affinity, taints and pod anti-affinity give each tenant its own nodes. |
+
+In every model, Omnistrate turns the system workflows in the spec into APIs, Customer Portal actions and CLI commands for provisioning, modify, stop, start, backup, restore and delete.
+
 ## Prerequisites
 
 - An Omnistrate account.

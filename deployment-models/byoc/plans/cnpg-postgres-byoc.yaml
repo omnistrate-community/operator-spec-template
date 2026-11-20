@@ -1,0 +1,1358 @@
+# yaml-language-server: $schema=https://api.omnistrate.cloud/2022-09-01-00/schema/service-spec-schema.json
+#
+# CNPG Postgres BYOC: managed PostgreSQL on the CloudNativePG operator, deployed
+# into the CUSTOMER's AWS account (BYOC). Adapted from
+# github.com/omnistrate-community/operator-spec-template (spec.yaml).
+#
+# Changes from the template:
+#  - byoaDeployment (BYOC) instead of hostedDeployment. The account below is the
+#    provider's AWS "Control Plane" account config; customers onboard their own
+#    AWS account and instances run in a deployment cell there.
+#  - The operator and Barman plugin install once per cell as amenities
+#    (cell-config/aws-amenities.yaml), not via deprecated helmChartDependencies.
+#  - Backups use IRSA (per-instance IAM role from terraform/aws/backup-irsa) into
+#    a customer-owned S3 bucket: no static AWS keys, SSE on every object.
+#  - Endpoints are INTERNAL NLBs in private subnets, limited to allowedCidrs.
+#  - TLS is required for every client connection (pg_hba rejects hostnossl).
+#  - modify patches only mutable fields; restore names the new Cluster after the
+#    target instance so later verbs address it; delete ignores missing objects.
+#  - The same workflows run on any conformant Kubernetes (BYOC-K8s / on-prem)
+#    with a ClusterIP + customer ingress and a customer-supplied object store.
+name: CNPG Postgres BYOC
+deployment:
+  byoaDeployment:
+    awsAccountId: "123456789012" # your Omnistrate control plane AWS account ID
+    awsBootstrapRoleAccountArn: "arn:aws:iam::123456789012:role/omnistrate-bootstrap-role"
+tenancyType: CUSTOM_TENANCY
+features:
+  INTERNAL:
+    logs:
+  CUSTOMER:
+    logs:
+  CUSTOM_TERRAFORM_POLICY:
+    policies:
+      aws: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "ManageCnpgBackupRoles",
+              "Effect": "Allow",
+              "Action": [
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:TagRole",
+                "iam:UntagRole",
+                "iam:UpdateRole",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListInstanceProfilesForRole"
+              ],
+              "Resource": "arn:aws:iam::*:role/cnpg-backup-*"
+            },
+            {
+              "Sid": "ReadCellCluster",
+              "Effect": "Allow",
+              "Action": ["eks:DescribeCluster"],
+              "Resource": "*"
+            }
+          ]
+        }
+
+services:
+  - name: backupAccess
+    description: Per-instance IAM role (IRSA) that lets the Barman sidecar write backups to the customer's S3 bucket without static keys.
+    internal: true
+    apiParameters:
+      - key: backupBucketName
+        description: Existing S3 bucket in your AWS account for base backups and WAL (same region recommended; enable default encryption and Block Public Access).
+        name: Backup S3 Bucket Name
+        type: String
+        modifiable: false
+        required: true
+        export: true
+    terraformConfigurations:
+      configurationPerCloudProvider:
+        aws:
+          terraformPath: /
+          artifactRelativePath: terraform/aws/backup-irsa
+          variablesValuesFileOverride: |
+            instance_id      = "{{ $sys.id }}"
+            region           = "{{ $sys.deploymentCell.region }}"
+            eks_cluster_name = "{{ $sys.deploymentCell.kubernetesClusterID }}"
+            oidc_issuer_id   = "{{ $sys.deploymentCell.oidcIssuerID }}"
+            bucket_name      = "{{ $var.backupBucketName }}"
+          requiredOutputs:
+            - key: role_arn
+              exported: false
+
+  - name: cnpgPostgres
+    description: PostgreSQL cluster managed by the CloudNativePG operator (one primary plus streaming replicas).
+    dependsOn:
+      - backupAccess
+    compute:
+      instanceTypes:
+        - apiParam: instanceType
+          cloudProvider: aws
+    apiParameters:
+      - key: instanceType
+        description: EC2 instance type for the Postgres nodes.
+        name: Instance Type
+        type: String
+        modifiable: true
+        required: false
+        export: true
+        defaultValue: "t3.medium"
+        options:
+          - t3.medium
+          - t3.large
+          - m6i.large
+          - m6i.xlarge
+          - r6i.large
+          - r6i.xlarge
+      - key: memberCount
+        description: Total Postgres members (1 primary plus replicas). Use 3 for high availability.
+        name: Members
+        type: Float64
+        modifiable: true
+        required: false
+        export: true
+        defaultValue: "3"
+        limits:
+          min: 1
+          max: 5
+      - key: storageSize
+        description: Data volume size per member, for example 20Gi. Volumes grow online and cannot shrink.
+        name: Storage Size
+        type: String
+        modifiable: true
+        required: false
+        export: true
+        defaultValue: "20Gi"
+      - key: postgresqlUsername
+        description: Owner role of the application database.
+        name: Database Username
+        type: String
+        modifiable: false
+        required: false
+        export: true
+        defaultValue: "app"
+      - key: postgresqlPassword
+        description: Password of the owner role. Stored only as a Kubernetes secret in the instance namespace.
+        name: Database Password
+        type: Password
+        modifiable: false
+        required: true
+        export: false
+      - key: postgresqlDatabase
+        description: Name of the application database.
+        name: Database Name
+        type: String
+        modifiable: false
+        required: false
+        export: true
+        defaultValue: "app"
+      - key: backupBucketName
+        description: Existing S3 bucket in your AWS account for base backups and WAL (same region recommended; enable default encryption and Block Public Access).
+        name: Backup S3 Bucket Name
+        type: String
+        modifiable: false
+        required: true
+        export: true
+        parameterDependencyMap:
+          backupAccess: backupBucketName
+      - key: allowedCidrs
+        description: Comma-separated client CIDRs allowed to reach the private endpoints (your VPC, peered VPCs or Transit Gateway ranges).
+        name: Allowed Client CIDRs
+        type: String
+        modifiable: true
+        required: false
+        export: true
+        defaultValue: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    endpointConfiguration:
+      writer:
+        host: "$sys.network.externalClusterEndpoint"
+        ports:
+          - 5432
+        primary: true
+        networkingType: INTERNAL
+      reader:
+        host: "reader-{{ $sys.network.externalClusterEndpoint }}"
+        ports:
+          - 5432
+        primary: false
+        networkingType: INTERNAL
+    operatorCRDConfiguration:
+      # Marker only: the CloudNativePG operator and Barman plugin install per
+      # cell as amenities (cell-config/aws-amenities.yaml).
+      helmChartDependencies: []
+    capabilities:
+      enableMultiZone: true
+      backupConfiguration:
+        backupRetentionInDays: 7
+        backupPeriodInHours: 24
+        snapshotBeforeDeletion: true
+    systemWorkflows:
+
+      create:
+        outputParameters:
+          status: "$tasks.applycluster.resource.status.phase"
+          postgresContainerImage: "$tasks.applycluster.resource.status.image"
+          currentPrimary: "$tasks.applycluster.resource.status.currentPrimary"
+          readyInstances: "$tasks.applycluster.resource.status.readyInstances"
+        workflow:
+          entrypoint: create
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: postgresqlUsername
+                value: "{{ $var.postgresqlUsername }}"
+              - name: postgresqlDatabase
+                value: "{{ $var.postgresqlDatabase }}"
+              - name: postgresqlUsernameEncoded
+                value: "{{ $func.base64encode($var.postgresqlUsername) }}"
+              - name: postgresqlPasswordEncoded
+                value: "{{ $func.base64encode($var.postgresqlPassword) }}"
+              - name: backupBucketName
+                value: "{{ $var.backupBucketName }}"
+              - name: backupRoleArn
+                value: "{{ $backupAccess.out.role_arn }}"
+              - name: memberCount
+                value: "{{ $var.memberCount }}"
+              - name: storageSize
+                value: "{{ $var.storageSize }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: privateSubnetIds
+                value: "{{ $sys.deploymentCell.privateSubnetIDs[*].id }}"
+              - name: allowedCidrs
+                value: "{{ $var.allowedCidrs }}"
+          templates:
+            - name: create
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+                  - name: backupBucketName
+                  - name: backupRoleArn
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              dag:
+                tasks:
+                  - name: createsecret
+                    template: apply-auth-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: postgresqlUsernameEncoded
+                          value: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                        - name: postgresqlPasswordEncoded
+                          value: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+                  - name: createobjectstore
+                    template: apply-object-store
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: backupBucketName
+                          value: "{{inputs.parameters.backupBucketName}}"
+                  - name: applycluster
+                    template: apply-cluster
+                    dependencies:
+                      - createsecret
+                      - createobjectstore
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: postgresqlUsername
+                          value: "{{inputs.parameters.postgresqlUsername}}"
+                        - name: postgresqlDatabase
+                          value: "{{inputs.parameters.postgresqlDatabase}}"
+                        - name: backupRoleArn
+                          value: "{{inputs.parameters.backupRoleArn}}"
+                        - name: memberCount
+                          value: "{{inputs.parameters.memberCount}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: privateSubnetIds
+                          value: "{{inputs.parameters.privateSubnetIds}}"
+                        - name: allowedCidrs
+                          value: "{{inputs.parameters.allowedCidrs}}"
+            - name: apply-auth-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: kubernetes.io/basic-auth
+                  data:
+                    username: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                    password: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+            - name: apply-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: backupBucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    retentionPolicy: "7d"
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupBucketName}}/{{inputs.parameters.instanceId}}"
+                      s3Credentials:
+                        inheritFromIAMRole: true
+                      wal:
+                        compression: gzip
+                        encryption: AES256
+                        maxParallel: 8
+                      data:
+                        compression: gzip
+                        encryption: AES256
+            - name: apply-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlDatabase
+                  - name: backupRoleArn
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              resource:
+                action: apply
+                successCondition: status.instances == {{inputs.parameters.memberCount}}, status.readyInstances == {{inputs.parameters.memberCount}}
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
+                  spec:
+                    instances: {{inputs.parameters.memberCount}}
+                    enablePDB: true
+                    primaryUpdateStrategy: unsupervised
+                    bootstrap:
+                      initdb:
+                        owner: "{{inputs.parameters.postgresqlUsername}}"
+                        database: "{{inputs.parameters.postgresqlDatabase}}"
+                        secret:
+                          name: basic-auth
+                    serviceAccountTemplate:
+                      metadata:
+                        annotations:
+                          eks.amazonaws.com/role-arn: "{{inputs.parameters.backupRoleArn}}"
+                    plugins:
+                      - name: barman-cloud.cloudnative-pg.io
+                        isWALArchiver: true
+                        parameters:
+                          barmanObjectName: "{{inputs.parameters.instanceId}}-s3"
+                    postgresql:
+                      pg_hba:
+                        - hostnossl all all 0.0.0.0/0 reject
+                        - hostnossl all all ::/0 reject
+                    storage:
+                      resizeInUseVolumes: true
+                      size: "{{inputs.parameters.storageSize}}"
+                      storageClass: cnpg-gp3-encrypted
+                    affinity:
+                      enablePodAntiAffinity: true
+                      podAntiAffinityType: preferred
+                      topologyKey: topology.kubernetes.io/zone
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: omnistrate.com/managed-by
+                                  operator: In
+                                  values:
+                                    - omnistrate
+                                - key: topology.kubernetes.io/region
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.region}}"
+                                - key: node.kubernetes.io/instance-type
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.instanceType}}"
+                                - key: omnistrate.com/resource
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.resourceId}}"
+                    managed:
+                      services:
+                        additional:
+                          - selectorType: rw
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-rw"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+                          - selectorType: ro
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-ro"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+
+      modify:
+        outputParameters:
+          status: "$tasks.applycluster.resource.status.phase"
+          postgresContainerImage: "$tasks.applycluster.resource.status.image"
+          currentPrimary: "$tasks.applycluster.resource.status.currentPrimary"
+          readyInstances: "$tasks.applycluster.resource.status.readyInstances"
+        workflow:
+          entrypoint: modify
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: memberCount
+                value: "{{ $var.memberCount }}"
+              - name: storageSize
+                value: "{{ $var.storageSize }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: privateSubnetIds
+                value: "{{ $sys.deploymentCell.privateSubnetIDs[*].id }}"
+              - name: allowedCidrs
+                value: "{{ $var.allowedCidrs }}"
+          templates:
+            - name: modify
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              dag:
+                tasks:
+                  - name: applycluster
+                    template: patch-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: memberCount
+                          value: "{{inputs.parameters.memberCount}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: privateSubnetIds
+                          value: "{{inputs.parameters.privateSubnetIds}}"
+                        - name: allowedCidrs
+                          value: "{{inputs.parameters.allowedCidrs}}"
+            - name: patch-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              resource:
+                action: patch
+                mergeStrategy: merge
+                successCondition: status.instances == {{inputs.parameters.memberCount}}, status.readyInstances == {{inputs.parameters.memberCount}}
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    instances: {{inputs.parameters.memberCount}}
+                    storage:
+                      size: "{{inputs.parameters.storageSize}}"
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: omnistrate.com/managed-by
+                                  operator: In
+                                  values:
+                                    - omnistrate
+                                - key: topology.kubernetes.io/region
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.region}}"
+                                - key: node.kubernetes.io/instance-type
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.instanceType}}"
+                                - key: omnistrate.com/resource
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.resourceId}}"
+                    managed:
+                      services:
+                        additional:
+                          - selectorType: rw
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-rw"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+                          - selectorType: ro
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.instanceId}}-cluster-ro"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.instanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+
+      start:
+        workflow:
+          entrypoint: start
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: memberCount
+                value: "{{ $var.memberCount }}"
+          templates:
+            - name: start
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+              dag:
+                tasks:
+                  - name: rehydratecluster
+                    template: rehydrate-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: memberCount
+                          value: "{{inputs.parameters.memberCount}}"
+            - name: rehydrate-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+              resource:
+                action: patch
+                mergeStrategy: merge
+                successCondition: status.instances == {{inputs.parameters.memberCount}}, status.readyInstances == {{inputs.parameters.memberCount}}
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
+
+      stop:
+        workflow:
+          entrypoint: stop
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: stop
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              dag:
+                tasks:
+                  - name: hibernatecluster
+                    template: hibernate-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+            - name: hibernate-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: patch
+                mergeStrategy: merge
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "on"
+
+      backup:
+        outputParameters:
+          backupId: "$tasks.createbackupcr.resource.status.backupId"
+          backupName: "$tasks.createbackupcr.resource.status.backupName"
+        workflow:
+          entrypoint: backup
+          arguments:
+            parameters:
+              - name: snapshotId
+                value: "{{ $sys.snapshot.id }}"
+              - name: snapshotTime
+                value: "{{ $sys.snapshot.time }}"
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+              - name: memberCount
+                value: "{{ $var.memberCount }}"
+          templates:
+            - name: backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+              dag:
+                tasks:
+                  - name: rehydratecluster
+                    template: rehydrate-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                        - name: memberCount
+                          value: "{{inputs.parameters.memberCount}}"
+                  - name: createbackupcr
+                    template: apply-backup
+                    dependencies:
+                      - rehydratecluster
+                    arguments:
+                      parameters:
+                        - name: snapshotId
+                          value: "{{inputs.parameters.snapshotId}}"
+                        - name: snapshotTime
+                          value: "{{inputs.parameters.snapshotTime}}"
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+            - name: rehydrate-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+                  - name: memberCount
+              resource:
+                action: patch
+                mergeStrategy: merge
+                successCondition: status.instances == {{inputs.parameters.memberCount}}, status.readyInstances == {{inputs.parameters.memberCount}}
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
+            - name: apply-backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: apply
+                successCondition: status.phase == completed
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Backup
+                  metadata:
+                    name: "{{inputs.parameters.snapshotId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      omnistrate.io/snapshot-id: "{{inputs.parameters.snapshotId}}"
+                      omnistrate.io/snapshot-time: "{{inputs.parameters.snapshotTime}}"
+                  spec:
+                    method: plugin
+                    pluginConfiguration:
+                      name: barman-cloud.cloudnative-pg.io
+                    cluster:
+                      name: "{{inputs.parameters.instanceId}}"
+
+      restore:
+        outputParameters:
+          status: "$tasks.applycluster.resource.status.phase"
+          currentPrimary: "$tasks.applycluster.resource.status.currentPrimary"
+          readyInstances: "$tasks.applycluster.resource.status.readyInstances"
+        workflow:
+          entrypoint: restore
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: restoreSnapshotId
+                value: "{{ $sys.restore.snapshotId }}"
+              - name: restoreSnapshotTime
+                value: "{{ $sys.restore.snapshotTime }}"
+              - name: backupId
+                value: "{{ $sys.restore.metadata.backupId }}"
+              - name: sourceInstanceId
+                value: "{{ $sys.sourceInstanceId }}"
+              - name: targetInstanceId
+                value: "{{ $sys.targetInstanceId }}"
+              - name: postgresqlUsername
+                value: "{{ $var.postgresqlUsername }}"
+              - name: postgresqlUsernameEncoded
+                value: "{{ $func.base64encode($var.postgresqlUsername) }}"
+              - name: postgresqlPasswordEncoded
+                value: "{{ $func.base64encode($var.postgresqlPassword) }}"
+              - name: backupBucketName
+                value: "{{ $var.backupBucketName }}"
+              - name: backupRoleArn
+                value: "{{ $backupAccess.out.role_arn }}"
+              - name: memberCount
+                value: "{{ $var.memberCount }}"
+              - name: storageSize
+                value: "{{ $var.storageSize }}"
+              - name: externalClusterEndpoint
+                value: "{{ $sys.network.externalClusterEndpoint }}"
+              - name: region
+                value: "{{ $sys.deploymentCell.region }}"
+              - name: instanceType
+                value: "{{ $sys.compute.node.instanceType }}"
+              - name: resourceId
+                value: "{{ $sys.deployment.resourceID }}"
+              - name: privateSubnetIds
+                value: "{{ $sys.deploymentCell.privateSubnetIDs[*].id }}"
+              - name: allowedCidrs
+                value: "{{ $var.allowedCidrs }}"
+          templates:
+            - name: restore
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: restoreSnapshotId
+                  - name: restoreSnapshotTime
+                  - name: backupId
+                  - name: sourceInstanceId
+                  - name: targetInstanceId
+                  - name: postgresqlUsername
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+                  - name: backupBucketName
+                  - name: backupRoleArn
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              dag:
+                tasks:
+                  - name: createsecret
+                    template: apply-auth-secret
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: postgresqlUsernameEncoded
+                          value: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                        - name: postgresqlPasswordEncoded
+                          value: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+                  - name: createrestoreobjectstore
+                    template: apply-restore-object-store
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: targetInstanceId
+                          value: "{{inputs.parameters.targetInstanceId}}"
+                        - name: sourceInstanceId
+                          value: "{{inputs.parameters.sourceInstanceId}}"
+                        - name: backupBucketName
+                          value: "{{inputs.parameters.backupBucketName}}"
+                  - name: createbackupobjectstore
+                    template: apply-backup-object-store
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: targetInstanceId
+                          value: "{{inputs.parameters.targetInstanceId}}"
+                        - name: backupBucketName
+                          value: "{{inputs.parameters.backupBucketName}}"
+                  - name: applycluster
+                    template: apply-restored-cluster
+                    dependencies:
+                      - createsecret
+                      - createrestoreobjectstore
+                      - createbackupobjectstore
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: targetInstanceId
+                          value: "{{inputs.parameters.targetInstanceId}}"
+                        - name: sourceInstanceId
+                          value: "{{inputs.parameters.sourceInstanceId}}"
+                        - name: restoreSnapshotId
+                          value: "{{inputs.parameters.restoreSnapshotId}}"
+                        - name: restoreSnapshotTime
+                          value: "{{inputs.parameters.restoreSnapshotTime}}"
+                        - name: backupId
+                          value: "{{inputs.parameters.backupId}}"
+                        - name: postgresqlUsername
+                          value: "{{inputs.parameters.postgresqlUsername}}"
+                        - name: backupRoleArn
+                          value: "{{inputs.parameters.backupRoleArn}}"
+                        - name: memberCount
+                          value: "{{inputs.parameters.memberCount}}"
+                        - name: storageSize
+                          value: "{{inputs.parameters.storageSize}}"
+                        - name: externalClusterEndpoint
+                          value: "{{inputs.parameters.externalClusterEndpoint}}"
+                        - name: region
+                          value: "{{inputs.parameters.region}}"
+                        - name: instanceType
+                          value: "{{inputs.parameters.instanceType}}"
+                        - name: resourceId
+                          value: "{{inputs.parameters.resourceId}}"
+                        - name: privateSubnetIds
+                          value: "{{inputs.parameters.privateSubnetIds}}"
+                        - name: allowedCidrs
+                          value: "{{inputs.parameters.allowedCidrs}}"
+            - name: apply-auth-secret
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: postgresqlUsernameEncoded
+                  - name: postgresqlPasswordEncoded
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+                  type: kubernetes.io/basic-auth
+                  data:
+                    username: "{{inputs.parameters.postgresqlUsernameEncoded}}"
+                    password: "{{inputs.parameters.postgresqlPasswordEncoded}}"
+            - name: apply-restore-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: targetInstanceId
+                  - name: sourceInstanceId
+                  - name: backupBucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.targetInstanceId}}-restore-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupBucketName}}/{{inputs.parameters.sourceInstanceId}}"
+                      s3Credentials:
+                        inheritFromIAMRole: true
+                      wal:
+                        compression: gzip
+                        encryption: AES256
+                        maxParallel: 8
+                      data:
+                        compression: gzip
+                        encryption: AES256
+            - name: apply-backup-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: targetInstanceId
+                  - name: backupBucketName
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.targetInstanceId}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+                  spec:
+                    retentionPolicy: "7d"
+                    configuration:
+                      destinationPath: "s3://{{inputs.parameters.backupBucketName}}/{{inputs.parameters.targetInstanceId}}"
+                      s3Credentials:
+                        inheritFromIAMRole: true
+                      wal:
+                        compression: gzip
+                        encryption: AES256
+                        maxParallel: 8
+                      data:
+                        compression: gzip
+                        encryption: AES256
+            - name: apply-restored-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: targetInstanceId
+                  - name: sourceInstanceId
+                  - name: restoreSnapshotId
+                  - name: restoreSnapshotTime
+                  - name: backupId
+                  - name: postgresqlUsername
+                  - name: backupRoleArn
+                  - name: memberCount
+                  - name: storageSize
+                  - name: externalClusterEndpoint
+                  - name: region
+                  - name: instanceType
+                  - name: resourceId
+                  - name: privateSubnetIds
+                  - name: allowedCidrs
+              resource:
+                action: apply
+                successCondition: status.instances == {{inputs.parameters.memberCount}}, status.readyInstances == {{inputs.parameters.memberCount}}
+                failureCondition: status.phase == failed
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.targetInstanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+                    annotations:
+                      cnpg.io/hibernation: "off"
+                      omnistrate.io/snapshot-id: "{{inputs.parameters.restoreSnapshotId}}"
+                      omnistrate.io/snapshot-time: "{{inputs.parameters.restoreSnapshotTime}}"
+                      omnistrate.io/backup-id: "{{inputs.parameters.backupId}}"
+                      omnistrate.io/source-instance: "{{inputs.parameters.sourceInstanceId}}"
+                  spec:
+                    instances: {{inputs.parameters.memberCount}}
+                    enablePDB: true
+                    primaryUpdateStrategy: unsupervised
+                    bootstrap:
+                      recovery:
+                        source: origin
+                        recoveryTarget:
+                          backupID: "{{inputs.parameters.backupId}}"
+                          targetImmediate: true
+                    externalClusters:
+                      - name: origin
+                        plugin:
+                          name: barman-cloud.cloudnative-pg.io
+                          parameters:
+                            barmanObjectName: "{{inputs.parameters.targetInstanceId}}-restore-s3"
+                            serverName: "{{inputs.parameters.sourceInstanceId}}"
+                    serviceAccountTemplate:
+                      metadata:
+                        annotations:
+                          eks.amazonaws.com/role-arn: "{{inputs.parameters.backupRoleArn}}"
+                    plugins:
+                      - name: barman-cloud.cloudnative-pg.io
+                        isWALArchiver: true
+                        parameters:
+                          barmanObjectName: "{{inputs.parameters.targetInstanceId}}-s3"
+                    postgresql:
+                      pg_hba:
+                        - hostnossl all all 0.0.0.0/0 reject
+                        - hostnossl all all ::/0 reject
+                    storage:
+                      resizeInUseVolumes: true
+                      size: "{{inputs.parameters.storageSize}}"
+                      storageClass: cnpg-gp3-encrypted
+                    affinity:
+                      enablePodAntiAffinity: true
+                      podAntiAffinityType: preferred
+                      topologyKey: topology.kubernetes.io/zone
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: omnistrate.com/managed-by
+                                  operator: In
+                                  values:
+                                    - omnistrate
+                                - key: topology.kubernetes.io/region
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.region}}"
+                                - key: node.kubernetes.io/instance-type
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.instanceType}}"
+                                - key: omnistrate.com/resource
+                                  operator: In
+                                  values:
+                                    - "{{inputs.parameters.resourceId}}"
+                    managed:
+                      roles:
+                        - name: "{{inputs.parameters.postgresqlUsername}}"
+                          ensure: present
+                          login: true
+                          passwordSecret:
+                            name: basic-auth
+                      services:
+                        additional:
+                          - selectorType: rw
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.targetInstanceId}}-cluster-rw"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.targetInstanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+                          - selectorType: ro
+                            updateStrategy: patch
+                            serviceTemplate:
+                              metadata:
+                                name: "{{inputs.parameters.targetInstanceId}}-cluster-ro"
+                                annotations:
+                                  external-dns.alpha.kubernetes.io/hostname: "reader-{{inputs.parameters.externalClusterEndpoint}}"
+                                  external-dns.alpha.kubernetes.io/ttl: "60"
+                                  service.beta.kubernetes.io/aws-load-balancer-type: external
+                                  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+                                  service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+                                  service.beta.kubernetes.io/aws-load-balancer-subnets: "{{inputs.parameters.privateSubnetIds}}"
+                                  service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "omnistrate.com/resource={{inputs.parameters.resourceId}},omnistrate.com/instance={{inputs.parameters.targetInstanceId}},omnistrate.com/managed-by=omnistrate"
+                                  service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "false"
+                                  service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+                                  service.beta.kubernetes.io/aws-load-balancer-target-node-labels: omnistrate.com/managed-by=omnistrate
+                                  service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+                                  service.beta.kubernetes.io/load-balancer-source-ranges: "{{inputs.parameters.allowedCidrs}}"
+                              spec:
+                                type: LoadBalancer
+
+      deleteBackup:
+        workflow:
+          entrypoint: deleteBackup
+          arguments:
+            parameters:
+              - name: snapshotId
+                value: "{{ $sys.snapshot.id }}"
+              - name: snapshotTime
+                value: "{{ $sys.snapshot.time }}"
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: deleteBackup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: snapshotTime
+                  - name: namespace
+                  - name: instanceId
+              dag:
+                tasks:
+                  - name: deletebackupcr
+                    template: delete-backup
+                    arguments:
+                      parameters:
+                        - name: snapshotId
+                          value: "{{inputs.parameters.snapshotId}}"
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+            - name: delete-backup
+              inputs:
+                parameters:
+                  - name: snapshotId
+                  - name: namespace
+              resource:
+                action: delete
+                flags:
+                  - "--ignore-not-found=true"
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Backup
+                  metadata:
+                    name: "{{inputs.parameters.snapshotId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+
+      delete:
+        workflow:
+          entrypoint: delete
+          arguments:
+            parameters:
+              - name: namespace
+                value: "{{ $sys.namespace }}"
+              - name: instanceId
+                value: "{{ $sys.instanceId }}"
+          templates:
+            - name: delete
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              dag:
+                tasks:
+                  - name: deletecluster
+                    template: delete-cluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                  - name: deletesecret
+                    template: delete-auth-secret
+                    dependencies:
+                      - deletecluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                  - name: deleteobjectstore
+                    template: delete-object-store
+                    dependencies:
+                      - deletecluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+                  - name: deleterestoreobjectstore
+                    template: delete-restore-object-store
+                    dependencies:
+                      - deletecluster
+                    arguments:
+                      parameters:
+                        - name: namespace
+                          value: "{{inputs.parameters.namespace}}"
+                        - name: instanceId
+                          value: "{{inputs.parameters.instanceId}}"
+            - name: delete-cluster
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                flags:
+                  - "--ignore-not-found=true"
+                manifest: |
+                  apiVersion: postgresql.cnpg.io/v1
+                  kind: Cluster
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}"
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-auth-secret
+              inputs:
+                parameters:
+                  - name: namespace
+              resource:
+                action: delete
+                flags:
+                  - "--ignore-not-found=true"
+                manifest: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: basic-auth
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                flags:
+                  - "--ignore-not-found=true"
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
+            - name: delete-restore-object-store
+              inputs:
+                parameters:
+                  - name: namespace
+                  - name: instanceId
+              resource:
+                action: delete
+                flags:
+                  - "--ignore-not-found=true"
+                manifest: |
+                  apiVersion: barmancloud.cnpg.io/v1
+                  kind: ObjectStore
+                  metadata:
+                    name: "{{inputs.parameters.instanceId}}-restore-s3"
+                    namespace: "{{inputs.parameters.namespace}}"
