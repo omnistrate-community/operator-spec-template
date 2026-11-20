@@ -1,0 +1,67 @@
+# Deployment-cell amenities for CNPG Postgres BYOC (AWS).
+# Merge these customAmenities into the AWS deployment-cell config template
+# (organization template for the DEV environment type, or per cell) so every
+# BYOC cell gets the CloudNativePG operator, the Barman Cloud plugin and an
+# encrypted gp3 StorageClass BEFORE the first instance lands in it.
+# The operator is cluster-scoped: it installs once per cell, never per instance.
+customAmenities:
+  - name: cloudnative-pg
+    description: CloudNativePG operator and CRDs, installed once per deployment cell.
+    type: Helm
+    properties:
+      ChartName: cloudnative-pg
+      ChartVersion: 0.29.2
+      ChartRepoName: cnpg
+      ChartRepoURL: https://cloudnative-pg.github.io/charts
+      DefaultNamespace: cnpg-system
+      ChartValues:
+        priorityClassName: system-cluster-critical
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: omnistrate.com/control-plane
+                      operator: Exists
+        tolerations:
+          - key: CriticalAddonsOnly
+            operator: Exists
+  - name: plugin-barman-cloud
+    description: Barman Cloud CNPG-I plugin (S3 base backups and WAL archive). Needs cert-manager, which Omnistrate cells ship.
+    type: Helm
+    properties:
+      ChartName: plugin-barman-cloud
+      ChartVersion: 0.9.0
+      ChartRepoName: cnpg
+      ChartRepoURL: https://cloudnative-pg.github.io/charts
+      DefaultNamespace: cnpg-system
+      ChartValues:
+        priorityClassName: system-cluster-critical
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: omnistrate.com/control-plane
+                      operator: Exists
+        tolerations:
+          - key: CriticalAddonsOnly
+            operator: Exists
+  - name: cnpg-gp3-encrypted
+    description: Encrypted gp3 StorageClass for Postgres data volumes (encryption at rest).
+    type: KubernetesManifest
+    properties:
+      manifests:
+        - def:
+            apiVersion: storage.k8s.io/v1
+            kind: StorageClass
+            metadata:
+              name: cnpg-gp3-encrypted
+            provisioner: ebs.csi.aws.com
+            parameters:
+              type: gp3
+              encrypted: "true"
+              csi.storage.k8s.io/fstype: ext4
+            reclaimPolicy: Delete
+            allowVolumeExpansion: true
+            volumeBindingMode: WaitForFirstConsumer
